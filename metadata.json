@@ -1,0 +1,6 @@
+{
+  "name": "EduNova LMS",
+  "description": "Educational platform with AI-assisted Socratic engine and personalized learning paths.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
