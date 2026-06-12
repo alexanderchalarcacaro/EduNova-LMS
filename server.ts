@@ -231,6 +231,33 @@ TU MISIÓN: En lugar de dar respuestas directas, haz preguntas que guíen al est
   }
 });
 
+// Endpoint to fetch pricing plans dynamically from Clerk Billing API
+app.get("/api/clerk-plans", async (req, res) => {
+  const secretKey = process.env.CLERK_SECRET_KEY || "sk_test_ys7Z8TMEL56UU2CpOGJhyuifxaSArGHIe1WmAmRrjG";
+  try {
+    const response = await fetch("https://api.clerk.com/v1/billing/plans", {
+      headers: {
+        Authorization: `Bearer ${secretKey}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Clerk API returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const mode = secretKey.includes("_live_") ? "production" : "test";
+    return res.json({ ...data, mode });
+  } catch (err: any) {
+    console.error("Error retrieving Clerk billing plans:", err);
+    return res.status(500).json({ 
+      error: "No se pudieron obtener las tarifas de Clerk.", 
+      details: err.message,
+      mode: (process.env.CLERK_SECRET_KEY || "").includes("_live_") ? "production" : "test"
+    });
+  }
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

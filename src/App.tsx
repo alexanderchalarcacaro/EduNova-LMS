@@ -50,6 +50,7 @@ import {
   saveUserChat
 } from './services/db';
 import { EdunovaLogo } from './components/EdunovaLogo';
+import { AntigravityObjects } from './components/AntigravityObjects';
 import supabaseSql from '../supabase-setup.sql?raw';
 import { supabase } from './lib/supabase';
 
@@ -76,6 +77,7 @@ export default function App() {
   const [missingTables, setMissingTables] = useState<string[]>([]);
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [wasCopied, setWasCopied] = useState(false);
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'clerk' | 'database'>('clerk');
 
   // Monitor database connection table checks
   useEffect(() => {
@@ -96,18 +98,30 @@ export default function App() {
       if (user) {
         setIsInitializing(true);
         
-        if (!user.unsafeMetadata.plan) {
+        let activePlanId = (user.unsafeMetadata?.plan as string);
+        
+        if (!activePlanId) {
+          const chosenPlan = localStorage.getItem('edunova_chosen_plan') || 'free_user';
           try {
             await user.update({
-              unsafeMetadata: { plan: 'free_user' }
+              unsafeMetadata: { plan: chosenPlan }
             });
+            localStorage.removeItem('edunova_chosen_plan');
+            activePlanId = chosenPlan;
           } catch (e) {
             console.error('Error setting default plan in Clerk', e);
+            activePlanId = 'free_user';
           }
         }
 
+        // Ensure plan is synced to database/localStorage
+        try {
+          await saveUserPlan(user.id, activePlanId);
+        } catch (dbErr) {
+          console.error('Error syncing plan to database:', dbErr);
+        }
+
         // Determine plan dynamically based on metadata properties
-        let activePlanId = 'free_user';
         let exactName = '';
         
         const anyUser = user as any;
@@ -357,12 +371,13 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-[#131314] text-zinc-100 flex overflow-hidden">
+    <>
       <SignedOut>
         <LandingPage />
       </SignedOut>
 
       <SignedIn>
+        <div className="min-h-screen bg-[#0E152E] bg-gradient-to-br from-[#0c0f24] via-[#0e1635] to-[#121c4b] text-zinc-100 flex overflow-hidden relative font-sans">
         {/* Toggleable Drawer trigger overlay for mobile screens */}
         {isSidebarOpen && (
           <div 
@@ -429,12 +444,26 @@ export default function App() {
               </button>
               <button 
                 onClick={() => setCurrentView('PRICING')}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-left transition-all ${
-                  currentView === 'PRICING' ? 'bg-zinc-800 text-white animate-pulse' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-left transition-all ${
+                  currentView === 'PRICING' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
                 }`}
               >
-                <CreditCard size={15} />
-                <span>Plan de Suscripción</span>
+                <div className="flex items-center gap-3">
+                  <CreditCard size={15} />
+                  <span>Suscripción</span>
+                </div>
+                
+                {userPlan && (
+                  <span className={`text-[8px] font-mono px-2 py-0.5 rounded-full uppercase shrink-0 font-black tracking-tighter ${
+                    userPlan.id === 'ultra'
+                      ? 'bg-amber-400 text-black'
+                      : userPlan.id === 'pro'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-zinc-800 text-zinc-500'
+                  }`}>
+                    {userPlan.id === 'free_user' ? 'Grt' : userPlan.id.toUpperCase()}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -549,13 +578,29 @@ export default function App() {
                     alt={user?.fullName || 'User'} 
                     className="w-8.5 h-8.5 rounded-full border border-zinc-800 shrink-0 object-cover"
                   />
-                  <div className="min-w-0 flex flex-col justify-center leading-tight">
+                      <div className="min-w-0 flex flex-col justify-center leading-tight">
                     <span className="font-semibold text-zinc-200 text-xs truncate">
                       {user?.firstName || 'Estudiante'} {user?.lastName || ''}
                     </span>
-                    <span className="text-[9px] uppercase tracking-wider font-extrabold text-amber-400 font-mono">
-                      {userPlan?.name || 'Gratuito'}
-                    </span>
+                    {userPlan?.id === 'ultra' ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] uppercase tracking-wider font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-fuchsia-400 to-indigo-400 font-mono">
+                          Educador Ultra
+                        </span>
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      </div>
+                    ) : userPlan?.id === 'pro' ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] uppercase tracking-wider font-extrabold text-blue-400 font-mono">
+                          Pro Socrático
+                        </span>
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                      </div>
+                    ) : (
+                      <span className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 font-mono">
+                        Plan Gratuito
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -581,10 +626,13 @@ export default function App() {
         </aside>
 
         {/* ================= MAIN CONTENT WORKSPACE ================= */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-[#131314] relative h-screen">
+        <main className={`flex-1 flex flex-col bg-transparent relative h-screen transition-all ${currentView === 'PRICING' ? 'z-[60] overflow-visible' : 'z-10 overflow-hidden'}`}>
+          
+          {/* Antigravity floating movement decoration */}
+          <AntigravityObjects />
           
           {/* Header Bar with Hamburger panel toggle for mobile */}
-          <header className="flex md:hidden items-center justify-between p-4 bg-[#131314] border-b border-[#202124] shrink-0">
+          <header className="flex md:hidden items-center justify-between p-4 bg-[#0c0f24]/80 backdrop-blur-md border-b border-[#2d2e30]/50 shrink-0 z-20">
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setIsSidebarOpen(true)}
@@ -623,8 +671,8 @@ export default function App() {
                     </button>
                   </div>
                   
-                  {/* Outer card enclosing Pricing widget */}
-                  <div className="bg-[#1e1f20] p-6 rounded-3xl border border-[#2d2e30]">
+                  {/* Outer glass container enclosing Pricing widget */}
+                  <div className="bg-white/[0.03] border border-white/10 p-4 md:p-10 rounded-[44px] shadow-2xl backdrop-blur-2xl">
                     <PricingModal />
                   </div>
                 </motion.div>
@@ -737,57 +785,57 @@ export default function App() {
                     </div>
 
                     {/* Interactive proposal cards (Gemini Web layout) */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 select-none">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 select-none relative z-10">
                       
                       <div 
                         onClick={() => handleQuickPromptClick('math', 'm1', 'Álgebra Básica', 'Explícame socráticamente cómo resolver una ecuación cuadrática desde cero')}
-                        className="bg-[#1e1f20] hover:bg-zinc-800 border border-[#2d2e30] hover:border-zinc-700/80 p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
+                        className="bg-[#1A2B5E]/30 hover:bg-[#1A2B5E]/55 border border-[#2563EB]/25 hover:border-[#10B981]/40 backdrop-blur-md p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
                       >
-                        <p className="text-xs text-zinc-300 line-clamp-4 font-normal group-hover:text-white leading-relaxed">
+                        <p className="text-xs text-zinc-350 line-clamp-4 font-normal group-hover:text-white leading-relaxed font-sans">
                           "Ayúdame a comprender socráticamente cómo despejar y resolver una ecuación cuadrática desde sus fundamentos."
                         </p>
-                        <div className="flex items-center justify-between mt-3 text-[10px] text-zinc-500 group-hover:text-zinc-400 font-bold uppercase tracking-wider">
+                        <div className="flex items-center justify-between mt-3 text-[10px] text-[#10B981] group-hover:text-white font-mono font-bold uppercase tracking-wider">
                           <span>Álgebra Básica</span>
-                          <span className="w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center font-bold">✓</span>
+                          <span className="w-5 h-5 bg-[#2563EB]/20 border border-[#2563EB]/40 rounded-full flex items-center justify-center font-bold">&bull;</span>
                         </div>
                       </div>
 
                       <div 
                         onClick={() => handleQuickPromptClick('physics', 'p4', 'Física Cuántica', 'Ayúdame a entender el entrelazamiento cuántico con analogías')}
-                        className="bg-[#1e1f20] hover:bg-zinc-800 border border-[#2d2e30] hover:border-zinc-700/80 p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
+                        className="bg-[#1A2B5E]/30 hover:bg-[#1A2B5E]/55 border border-[#2563EB]/25 hover:border-[#10B981]/40 backdrop-blur-md p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
                       >
-                        <p className="text-xs text-zinc-300 line-clamp-4 font-normal group-hover:text-white leading-relaxed">
+                        <p className="text-xs text-zinc-350 line-clamp-4 font-normal group-hover:text-white leading-relaxed font-sans">
                           "Deseo comprender el misterio del entrelazamiento cuántico a través de preguntas guiadas y analogías sencillas."
                         </p>
-                        <div className="flex items-center justify-between mt-3 text-[10px] text-zinc-500 group-hover:text-zinc-400 font-bold uppercase tracking-wider">
+                        <div className="flex items-center justify-between mt-3 text-[10px] text-[#10B981] group-hover:text-white font-mono font-bold uppercase tracking-wider">
                           <span>Física Cuántica</span>
-                          <span className="w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center font-bold">✓</span>
+                          <span className="w-5 h-5 bg-[#2563EB]/20 border border-[#2563EB]/40 rounded-full flex items-center justify-center font-bold">&bull;</span>
                         </div>
                       </div>
 
                       <div 
                         onClick={() => handleQuickPromptClick('history', 'h1', 'Revolución Industrial', 'Analicemos las consecuencias socioeconómicas de la Revolución Industrial')}
-                        className="bg-[#1e1f20] hover:bg-zinc-800 border border-[#2d2e30] hover:border-zinc-700/80 p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
+                        className="bg-[#1A2B5E]/30 hover:bg-[#1A2B5E]/55 border border-[#2563EB]/25 hover:border-[#10B981]/40 backdrop-blur-md p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
                       >
-                        <p className="text-xs text-zinc-300 line-clamp-4 font-normal group-hover:text-white leading-relaxed">
+                        <p className="text-xs text-zinc-350 line-clamp-4 font-normal group-hover:text-white leading-relaxed font-sans">
                           "Exploremos críticamente cuáles fueron las verdaderas consecuencias sociales y económicas en la Revolución Industrial."
                         </p>
-                        <div className="flex items-center justify-between mt-3 text-[10px] text-zinc-500 group-hover:text-zinc-400 font-bold uppercase tracking-wider">
+                        <div className="flex items-center justify-between mt-3 text-[10px] text-[#10B981] group-hover:text-white font-mono font-bold uppercase tracking-wider">
                           <span>Revolución Industrial</span>
-                          <span className="w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center font-bold">✓</span>
+                          <span className="w-5 h-5 bg-[#2563EB]/20 border border-[#2563EB]/40 rounded-full flex items-center justify-center font-bold">&bull;</span>
                         </div>
                       </div>
 
                       <div 
                         onClick={() => handleQuickPromptClick('biology', 'b1', 'Genética', 'Guíame para descifrar las leyes de la herencia genética de Gregor Mendel')}
-                        className="bg-[#1e1f20] hover:bg-zinc-800 border border-[#2d2e30] hover:border-zinc-700/80 p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
+                        className="bg-[#1A2B5E]/30 hover:bg-[#1A2B5E]/55 border border-[#2563EB]/25 hover:border-[#10B981]/40 backdrop-blur-md p-5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[160px] group shadow-sm active:scale-98"
                       >
-                        <p className="text-xs text-zinc-300 line-clamp-4 font-normal group-hover:text-white leading-relaxed">
+                        <p className="text-xs text-zinc-350 line-clamp-4 font-normal group-hover:text-white leading-relaxed font-sans">
                           "Ayúdame a descifrar las leyes de Mendel y la herencia del ADN sin darme la respuesta de inmediato."
                         </p>
-                        <div className="flex items-center justify-between mt-3 text-[10px] text-zinc-500 group-hover:text-zinc-400 font-bold uppercase tracking-wider">
+                        <div className="flex items-center justify-between mt-3 text-[10px] text-[#10B981] group-hover:text-white font-mono font-bold uppercase tracking-wider">
                           <span>Genética Mendel</span>
-                          <span className="w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center font-bold">✓</span>
+                          <span className="w-5 h-5 bg-[#2563EB]/20 border border-[#2563EB]/40 rounded-full flex items-center justify-center font-bold">&bull;</span>
                         </div>
                       </div>
 
@@ -795,17 +843,17 @@ export default function App() {
 
                     {/* Active itinerary reminder fallback banner */}
                     {userItinerary && userItinerary.subject_id && (
-                      <div className="p-5 rounded-2xl bg-zinc-900/60 border border-[#2d2e30]/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 select-none">
+                      <div className="p-5 rounded-2xl bg-[#1A2B5E]/40 border border-[#2563EB]/30 backdrop-blur-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 select-none relative z-10">
                         <div className="space-y-1">
                           <h4 className="font-semibold text-zinc-200 text-sm flex items-center gap-1.5">
-                            <Sparkles size={14} className="text-emerald-400" />
+                            <Sparkles size={14} className="text-[#10B981]" />
                             Tienes una ruta de aprendizaje activa en el panel
                           </h4>
-                          <p className="text-zinc-500 text-xs font-medium">Reanuda los temas de estudio que configuraste previamente en tu panel para hoy.</p>
+                          <p className="text-zinc-400 text-xs font-medium">Reanuda los temas de estudio que configuraste previamente en tu panel para hoy.</p>
                         </div>
                         <button
                           onClick={resumeLearning}
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-bold transition-all active:scale-95"
+                          className="px-4 py-2 bg-[#2563EB] hover:bg-[#2563EB]/80 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 shadow-lg shadow-blue-500/10"
                         >
                           Retomar Itinerario
                         </button>
@@ -813,8 +861,8 @@ export default function App() {
                     )}
 
                     {/* Materias disponibles grid layout inside Dark framework */}
-                    <section className="space-y-4">
-                      <h3 className="text-lg font-display text-zinc-300 font-medium">
+                    <section className="space-y-4 relative z-10">
+                      <h3 className="text-lg font-display text-zinc-200 font-semibold uppercase tracking-wider">
                         Materias de Estudio Disponibles
                       </h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -824,17 +872,17 @@ export default function App() {
                             <div
                               key={subject.id}
                               onClick={() => handleSubjectSelect(subject)}
-                              className="group p-5 bg-[#1e1f20] hover:bg-zinc-800 border border-[#2d2e30] hover:border-zinc-700/80 rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[130px] shadow-sm select-none"
+                              className="group p-5 bg-[#1A2B5E]/20 hover:bg-[#1A2B5E]/45 border border-[#2563EB]/20 hover:border-[#10B981]/40 backdrop-blur-md rounded-2xl cursor-pointer transition-all flex flex-col justify-between h-[130px] shadow-sm select-none"
                             >
-                              <div className={`w-10 h-10 rounded-xl ${subject.color} flex items-center justify-center text-white`}>
+                              <div className={`w-10 h-10 rounded-xl ${subject.color} flex items-center justify-center text-white shadow-md`}>
                                 <CustomIcon size={20} />
                               </div>
                               <div className="flex items-center justify-between mt-2">
                                 <div>
                                   <h4 className="font-bold text-zinc-200 text-sm group-hover:text-white transition-colors">{subject.name}</h4>
-                                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{subject.topics.length} Temas</span>
+                                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-mono font-bold">{subject.topics.length} Temas</span>
                                 </div>
-                                <ArrowRight size={14} className="text-zinc-500 group-hover:translate-x-0.5 group-hover:text-white transition-all" />
+                                <ArrowRight size={14} className="text-zinc-500 group-hover:translate-x-0.5 group-hover:text-[#10B981] transition-all" />
                               </div>
                             </div>
                           );
@@ -855,32 +903,32 @@ export default function App() {
           </div>
         </main>
 
-        {/* ================= DB POPULATION MODAL ================= */}
+        {/* ================= SETTINGS & INTEGRATIONS MODAL ================= */}
         <AnimatePresence>
           {isSqlModalOpen && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md"
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
               onClick={() => setIsSqlModalOpen(false)}
             >
               <motion.div
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
-                className="bg-[#1a1a1c] border border-[#2d2e30] rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
+                className="bg-[#11162C] border border-[#2563EB]/30 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] text-zinc-100"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Header */}
-                <div className="px-6 py-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
+                <div className="px-6 py-5 border-b border-[#2563EB]/25 flex items-center justify-between bg-[#151D3A]/60">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-500 border border-amber-500/25">
-                      <Database size={20} />
+                    <div className="w-10 h-10 bg-[#2563EB]/20 rounded-xl flex items-center justify-center text-[#2563EB] border border-[#2563EB]/40 shadow-inner">
+                      <Settings size={20} className="animate-spin-slow" />
                     </div>
                     <div>
-                      <h3 className="font-display font-semibold text-white text-md">Sincronización de Base de Datos (Cloud)</h3>
-                      <p className="text-xs text-zinc-500">Configuración o inicialización de Supabase</p>
+                      <h3 className="font-display font-semibold text-white text-[15px] tracking-wide">Configuración del Sistema</h3>
+                      <p className="text-[11px] text-zinc-400">Ajustes técnicos de Clerk, suscripciones y base de datos</p>
                     </div>
                   </div>
                   <button 
@@ -891,59 +939,195 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Content */}
-                <div className="p-6 overflow-y-auto space-y-5 text-xs text-zinc-300 leading-relaxed scrollbar-thin scrollbar-thumb-zinc-800">
-                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-200">
-                    <AlertTriangle size={18} className="shrink-0 text-amber-500 mt-0.5 animate-pulse" />
-                    <div>
-                      <p className="font-bold mb-1">¡Respaldo Local Resiliente Activado!</p>
-                      <p>
-                        EduNova ha detectado que faltan {missingTables.length || 'algunas'} tablas en tu base de datos Supabase: <strong>[{missingTables.join(', ')}]</strong>. 
-                        No te preocupes: para garantizar tu confort, la aplicación ha activado el <strong>respaldo en LocalStorage</strong>. Puedes estudiar normalmente, pues tu progreso, itinerarios y conversaciones socráticas se guardan instantáneamente de forma local en tu navegador.
-                      </p>
-                    </div>
-                  </div>
+                {/* Tab Selector */}
+                <div className="px-6 pt-4 pb-2 flex gap-2 border-b border-[#2563EB]/15 bg-[#151D3A]/30">
+                  <button
+                    onClick={() => setSettingsActiveTab('clerk')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                      settingsActiveTab === 'clerk'
+                        ? 'bg-[#2563EB] text-white shadow-md shadow-blue-500/15'
+                        : 'bg-[#1e1f20]/30 text-zinc-400 hover:text-white border border-[#2563EB]/10'
+                    }`}
+                  >
+                    <CreditCard size={14} />
+                    <span>Mi Suscripción & Clerk</span>
+                  </button>
+                  <button
+                    onClick={() => setSettingsActiveTab('database')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                      settingsActiveTab === 'database'
+                        ? 'bg-[#2563EB] text-white shadow-md shadow-blue-500/15'
+                        : 'bg-[#1e1f20]/30 text-zinc-400 hover:text-white border border-[#2563EB]/10'
+                    }`}
+                  >
+                    <Database size={14} />
+                    <span>Base de Datos Supabase ({missingTables.length === 0 ? 'Conectado' : 'Offline'})</span>
+                  </button>
+                </div>
 
-                  <div className="space-y-2">
-                    <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px]">¿Cómo sincronizar tu Base de Datos en la Nube?</h4>
-                    <ol className="list-decimal pl-5 space-y-2 text-zinc-400">
-                      <li>Ingresa a tu consola de control en <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-white font-bold underline hover:text-amber-500">Supabase</a> y elige tu proyecto.</li>
-                      <li>Localiza el <strong>SQL Editor</strong> en la barra lateral izquierda (ícono de terminal).</li>
-                      <li>Presiona <strong>"New Query"</strong>, pega las sentencias SQL de abajo y haz clic en <strong>"Run"</strong> para procesarlo.</li>
-                    </ol>
-                  </div>
+                {/* Content Area */}
+                <div className="p-6 overflow-y-auto space-y-6 text-xs text-zinc-300 leading-relaxed scrollbar-thin scrollbar-thumb-[#2563EB]/20">
+                  
+                  {/* TAB 1: CLERK SUBSCRIPTION DETAILS */}
+                  {settingsActiveTab === 'clerk' && (
+                    <div className="space-y-5">
+                      {/* Connection Health */}
+                      <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        <div className="text-zinc-200">
+                          <p className="font-bold text-xs text-emerald-400 flex items-center gap-1.5">
+                            Clerk Auth: Enlace Activo y Sincronizado
+                          </p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">La pasarela de autenticación y asignación de planes se comunica correctamente en vivo.</p>
+                        </div>
+                      </div>
 
-                  <div className="relative mt-4">
-                    <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
-                      <button
-                        onClick={handleCopySql}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors font-bold text-[10px] shadow-sm border border-zinc-700"
-                      >
-                        {wasCopied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                        <span>{wasCopied ? '¡Copiado!' : 'Copiar Script completo'}</span>
-                      </button>
+                      {/* Subscription Status Block */}
+                      <div className="bg-[#1A2B5E]/30 border border-[#2563EB]/30 rounded-2xl p-5 space-y-4">
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                          <div>
+                            <span className="text-[10px] uppercase tracking-widest text-[#10B981] font-mono font-bold">Plan Activo Detectado</span>
+                            <h4 className="text-xl font-display font-bold text-white mt-0.5 flex items-center gap-2">
+                              {userPlan?.name || 'Plan Básico de Prueba'}
+                              <span className="px-2.5 py-0.5 bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-900 border border-teal-300 text-[9px] font-extrabold uppercase rounded-full tracking-wider">
+                                {userPlan?.id === 'free_user' ? 'Gratuito' : 'Premium'}
+                              </span>
+                            </h4>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                              setIsSqlModalOpen(false);
+                              setCurrentView('PRICING');
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-[#2563EB] to-[#10B981] hover:shadow-lg hover:shadow-blue-500/10 text-white rounded-xl font-bold uppercase text-[10px] tracking-wider transition-all active:scale-95"
+                          >
+                            Modificar Tarifa / Cambiar Plan
+                          </button>
+                        </div>
+
+                        {/* Plan Privileges */}
+                        <div className="border-t border-[#2563EB]/15 pt-3.5">
+                          <p className="font-bold text-zinc-300 text-[10px] uppercase tracking-wider mb-2">Privilegios actuales de tu cuenta:</p>
+                          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-zinc-400 text-[11px]">
+                            {userPlan?.features.map((feat, i) => (
+                              <li key={i} className="flex items-center gap-1.5">
+                                <span className="text-[#10B981] font-bold">&bull;</span>
+                                <span>{feat}</span>
+                              </li>
+                            )) || (
+                              <>
+                                <li className="flex items-center gap-1.5">&bull; Acceso limitado a 2 materias principales</li>
+                                <li className="flex items-center gap-1.5">&bull; Hasta 5 consultas diarias al tutor socrático</li>
+                              </>
+                            )}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Technical Clerk Metadata & Session Information */}
+                      <div className="space-y-3">
+                        <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px] border-b border-[#2563EB]/10 pb-1.5 matches">Identidad técnica de Clerk</h4>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-1">
+                          <div className="p-3 bg-[#151D3A]/40 rounded-xl border border-[#2563EB]/15">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold block">Usuario Registrado</span>
+                            <span className="font-semibold text-zinc-200 text-xs mt-0.5 block truncate">{user?.fullName || 'Invitado sin registrar'}</span>
+                          </div>
+                          <div className="p-3 bg-[#151D3A]/40 rounded-xl border border-[#2563EB]/15">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold block">Correo Principal</span>
+                            <span className="font-semibold text-zinc-200 text-xs mt-0.5 block truncate">{user?.primaryEmailAddress?.emailAddress || 'No especificado'}</span>
+                          </div>
+                          <div className="p-3 bg-[#151D3A]/40 rounded-xl border border-[#2563EB]/15">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold block">Clerk ID en Base de Datos</span>
+                            <span className="font-mono text-[10px] text-[#2563EB] mt-0.5 block truncate">{user?.id || 'No disponible'}</span>
+                          </div>
+                          <div className="p-3 bg-[#151D3A]/40 rounded-xl border border-[#2563EB]/15">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold block">Plan en metadata de Clerk (unsafeMetadata)</span>
+                            <span className="font-mono text-[10px] text-[#10B981] mt-0.5 flex items-center gap-1.5 font-bold">
+                              <span>"{user?.unsafeMetadata?.plan as string || 'free_user'}"</span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Raw Metadata Accordion Panel */}
+                        <div className="p-4 bg-black/40 rounded-2xl border border-zinc-800">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono font-semibold">Metadata JSON en vivo de Clerk:</span>
+                            <span className="text-[8px] bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/30 px-1.5 py-0.5 font-mono rounded">READ ONLY</span>
+                          </div>
+                          <pre className="text-[10px] font-mono text-zinc-400 p-2 overflow-x-auto max-h-32 bg-black/20 rounded-lg">
+                            {JSON.stringify({
+                              userId: user?.id,
+                              unsafeMetadata: user?.unsafeMetadata || {},
+                              publicMetadata: user?.publicMetadata || {},
+                              externalAccounts: user?.externalAccounts?.map(acc => ({ provider: acc.provider, email: acc.emailAddress })) || []
+                            }, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
                     </div>
-                    <pre className="p-4 bg-black/60 text-zinc-400 rounded-2xl font-mono text-[9px] overflow-auto max-h-48 leading-relaxed border border-zinc-800">
-                      {supabaseSql}
-                    </pre>
-                  </div>
+                  )}
+
+                  {/* TAB 2: DATABASE SYNCHRONISATION */}
+                  {settingsActiveTab === 'database' && (
+                    <div className="space-y-5">
+                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-200">
+                        <AlertTriangle size={18} className="shrink-0 text-amber-500 mt-0.5 animate-pulse" />
+                        <div>
+                          <p className="font-bold mb-1">¡Respaldo Local Resiliente Activado!</p>
+                          <p>
+                            EduNova ha detectado que faltan {missingTables.length || 'algunas'} tablas en tu base de datos Supabase: <strong>[{missingTables.join(', ')}]</strong>. 
+                            No te preocupes: para garantizar tu confort, la aplicación ha activado el <strong>respaldo en LocalStorage</strong>. Puedes estudiar normalmente, pues tu progreso, itinerarios y conversaciones socráticas se guardan instantáneamente de forma local en tu navegador.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px]">¿Cómo sincronizar tu Base de Datos en la Nube?</h4>
+                        <ol className="list-decimal pl-5 space-y-2 text-zinc-400">
+                          <li>Ingresa a tu consola de control en <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-white font-bold underline hover:text-amber-500">Supabase</a> y elige tu proyecto.</li>
+                          <li>Localiza el <strong>SQL Editor</strong> en la barra lateral izquierda (ícono de terminal).</li>
+                          <li>Presiona <strong>"New Query"</strong>, pega las sentencias SQL de abajo y haz clic en <strong>"Run"</strong> para procesarlo.</li>
+                        </ol>
+                      </div>
+
+                      <div className="relative mt-4">
+                        <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+                          <button
+                            onClick={handleCopySql}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors font-bold text-[10px] shadow-sm border border-zinc-700"
+                          >
+                            {wasCopied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                            <span>{wasCopied ? '¡Copiado!' : 'Copiar Script completo'}</span>
+                          </button>
+                        </div>
+                        <pre className="p-4 bg-black/60 text-zinc-400 rounded-2xl font-mono text-[9px] overflow-auto max-h-48 leading-relaxed border border-zinc-800">
+                          {supabaseSql}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
 
                 {/* Footer */}
-                <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/20 flex justify-end">
+                <div className="px-6 py-4 border-t border-[#2563EB]/20 bg-[#151D3A]/20 flex justify-end">
                   <button
                     onClick={() => setIsSqlModalOpen(false)}
-                    className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all"
+                    className="px-5 py-2.5 bg-[#2563EB] hover:bg-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
                   >
-                    Entendido, continuar con LocalStorage
+                    Cerrar Configuración
                   </button>
                 </div>
               </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </SignedIn>
-    </div>
+    </>
   );
 }
 

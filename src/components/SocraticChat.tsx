@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Loader2, RotateCcw, AlertCircle, CircleAlert, Sparkles, User, ShieldAlert } from 'lucide-react';
+import { Send, Loader2, RotateCcw, AlertCircle, CircleAlert, Sparkles, User, ShieldAlert, X, Info, Trash2 } from 'lucide-react';
 import { Subject, Topic, Message } from '../types';
 import { getUserChat, saveUserChat } from '../services/db';
+import { EdunovaLogo } from './EdunovaLogo';
 
 interface SocraticChatProps {
   userId: string;
@@ -23,6 +24,7 @@ export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: Socr
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isHistorialLoaded, setIsHistorialLoaded] = useState(false);
+  const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load chat history whenever topic or user changes
@@ -55,17 +57,16 @@ export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: Socr
     }
   }, [messages, isLoading]);
 
-  const handleResetChat = async () => {
-    if (window.confirm('¿Estás seguro de que quieres reiniciar esta conversación? Perderás el historial actual para este tema.')) {
-      const resetGreeting = getDefaultGreeting();
-      setMessages(resetGreeting);
-      setIsHistorialLoaded(false);
-      if (userId) {
-        try {
-          await saveUserChat(userId, subject.id, topic.id, topic.name, resetGreeting);
-        } catch (e) {
-          console.error('Error guardando reset de chat:', e);
-        }
+  const handleConfirmReset = async () => {
+    const resetGreeting = getDefaultGreeting();
+    setMessages(resetGreeting);
+    setIsHistorialLoaded(false);
+    setIsCleanModalOpen(false);
+    if (userId) {
+      try {
+        await saveUserChat(userId, subject.id, topic.id, topic.name, resetGreeting);
+      } catch (e) {
+        console.error('Error guardando reset de chat:', e);
       }
     }
   };
@@ -146,11 +147,12 @@ export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: Socr
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleResetChat}
-            title="Reiniciar conversación"
-            className="p-2.5 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-all"
+            onClick={() => setIsCleanModalOpen(true)}
+            title="Limpiar conversación (Manteniendo Caché Vectorial)"
+            className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-all border border-zinc-850/60"
           >
-            <RotateCcw size={16} />
+            <RotateCcw size={14} className="text-zinc-400" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider hidden sm:block">Limpiar Conversación</span>
           </button>
           
           <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1e1f20] border border-[#2d2e30] rounded-lg">
@@ -279,6 +281,130 @@ export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: Socr
           </p>
         </div>
       </div>
+
+      {/* Modal de Limpieza Inteligente / Caché Semántico vectorizado */}
+      <AnimatePresence>
+        {isCleanModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+            onClick={() => setIsCleanModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="bg-[#1e1f20] border border-[#2d2e30] rounded-3xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="px-6 py-5 border-b border-zinc-800/60 flex items-center justify-between bg-zinc-900/40">
+                <div className="flex items-center gap-3">
+                  <EdunovaLogo size={28} showText={false} />
+                  <div>
+                    <h3 className="font-display font-semibold text-white text-md">Limpieza de Chat Inteligente</h3>
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold font-mono">Modo de Viabilidad Financiera (FinOps)</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsCleanModalOpen(false)}
+                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-5 text-xs text-zinc-300 leading-relaxed max-h-[70vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+                <div className="flex items-start gap-3 bg-[#131314]/80 border border-zinc-800 rounded-2xl p-4">
+                  <Sparkles size={18} className="text-emerald-400 shrink-0 mt-0.5 animate-pulse" />
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-zinc-200">Preservar Caché Semántico Vectorial (`pgvector`)</h4>
+                    <p className="text-zinc-400 leading-relaxed">
+                      Al limpiar esta conversación, reiniciarás tus mensajes a su estado de bienvenida socrática. Sin embargo, 
+                      <strong> no se destruirá el caché semántico global</strong> en Supabase.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-zinc-400 leading-relaxed font-sans text-[13px]">
+                  Para garantizar la viabilidad del proyecto, reducir el consumo y optimizar tu cuota de Gemini, conservamos los siguientes mecanismos:
+                </p>
+
+                <div className="space-y-4">
+                  {/* Step 1 */}
+                  <div className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
+                      1
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-zinc-200 text-sm">Vectorización Eficiente (Embeddings)</h5>
+                      <p className="text-zinc-400 mt-1">
+                        Las intenciones de tus preguntas se convierten a vectores numéricos de 768 dimensiones mediante un modelo de alta eficiencia (como <code>text-embedding-004</code>).
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
+                      2
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-zinc-200 text-sm">Búsqueda de Coincidencias de Similitud de Coseno</h5>
+                      <p className="text-zinc-400 mt-1">
+                        La extensión <code>pgvector</code> compara la semántica de tu duda actual. Si de forma teórica coincide en al menos un <strong>92%</strong> con una duda previamente resuelta, ¡se sirve la misma solución al instante!
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
+                      3
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-zinc-200 text-sm">Enrutamiento Socrático Inteligente</h5>
+                      <p className="text-zinc-400 mt-1">
+                        Las dudas directas o factuales se resuelven en <strong>&lt; 100ms</strong> con costo <strong>$0</strong> de API de Gemini. Solo las dudas procedimentales y personalizadas eluden el caché para mantener la esencia de la tutoría.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-300">
+                  <Info size={16} className="shrink-0 text-amber-500 mt-0.5" />
+                  <div>
+                    <p className="font-semibold mb-1 text-zinc-200">¿Qué sucederá ahora?</p>
+                    <p className="text-zinc-400">
+                      El historial de mensajes en pantalla de este tema volverá a empezar, pero si vuelves a formular preguntas conceptuales comunes ya resueltas, se cargarán de inmediato desde la base de datos sin consumir tu cuota diaria de tutoría.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-zinc-800/80 bg-zinc-900/20 flex flex-col sm:flex-row justify-end gap-2.5">
+                <button
+                  onClick={() => setIsCleanModalOpen(false)}
+                  className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmReset}
+                  className="px-5 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/35 text-rose-300 rounded-xl text-xs sm:text-[11px] font-bold uppercase tracking-wider transition-all"
+                >
+                  Confirmar Limpieza pero Mantener Caché
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
