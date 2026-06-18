@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Message } from '../types';
 
 // Registry of missing database tables (PGRST205 schema cache errors)
@@ -21,7 +21,9 @@ export function onTableStatusChange(listener: TableStatusListener) {
 function registerMissingTable(tableName: string) {
   if (!missingTables.has(tableName)) {
     missingTables.add(tableName);
-    console.warn(`[Supabase Status] Detectada tabla faltante: "${tableName}". Por favor ejecuta supabase-setup.sql en tu consola de Supabase.`);
+    if (isSupabaseConfigured) {
+      console.warn(`[Supabase Status] Detectada tabla faltante: "${tableName}". Por favor ejecuta supabase-setup.sql en tu consola de Supabase.`);
+    }
     listeners.forEach(l => {
       try { l(Array.from(missingTables)); } catch (e) {}
     });
@@ -30,65 +32,66 @@ function registerMissingTable(tableName: string) {
 
 // Guarda o actualiza el plan del estudiante
 export async function saveUserPlan(userId: string, planId: string) {
-  // Guardar en localStorage como respaldo local inmediato
   try {
     localStorage.setItem(`edunova_plan_${userId}`, planId);
   } catch (e) {}
 
-  try {
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .upsert({ user_id: userId, plan_id: planId }, { onConflict: 'user_id' });
-    
-    if (error) {
-      if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
-        registerMissingTable('user_profiles');
-        console.warn('[Supabase] Tabla user_profiles no encontrada. Usando respaldo de LocalStorage.');
-      } else {
-        console.error('Error saving plan to Supabase:', error.message);
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .upsert({
+          user_id: userId,
+          plan_id: planId
+        });
+      if (error) {
+        if (error.code && error.code.includes('PGRST205')) {
+          registerMissingTable('user_profiles');
+        } else {
+          console.error("Supabase Error saving user plan:", error);
+        }
       }
+    } catch (e) {
+      console.error("Failed to save user plan to Cloud:", e);
     }
-    return data;
-  } catch (e) {
-    console.warn('[Supabase] Falla al intentar guardar en user_profiles, usando fallback local.');
-    return null;
   }
+
+  return null;
 }
 
 // Obtiene el perfil del estudiante (incluye su plan)
 export async function getUserProfile(userId: string) {
-  try {
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
+  let profile = null;
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
       
-    if (error) {
-      if (error.code !== 'PGRST116') { 
-        if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
-          registerMissingTable('user_profiles');
-          console.warn('[Supabase] Tabla user_profiles no detectada en Supabase. Leyendo de LocalStorage.');
-        } else {
-          console.warn('Error fetching user profile from Supabase, pulling from LocalStorage fallback:', error.message);
-        }
+      if (error && error.code && error.code.includes('PGRST205')) {
+        registerMissingTable('user_profiles');
+      } else if (data) {
+        profile = data;
+        // Sync local
+        try { localStorage.setItem(`edunova_plan_${userId}`, data.plan_id); } catch(e) {}
       }
-      
-      // Intentar fallback
-      const localPlan = localStorage.getItem(`edunova_plan_${userId}`);
-      if (localPlan) {
-        return { user_id: userId, plan_id: localPlan };
-      }
-      return null;
+    } catch (e) {
+      console.error("Failed to load user profile from Cloud:", e);
     }
-    return data;
-  } catch (e) {
+  }
+
+  // Fallback a local
+  if (!profile) {
     const localPlan = localStorage.getItem(`edunova_plan_${userId}`);
     if (localPlan) {
-      return { user_id: userId, plan_id: localPlan };
+      profile = { user_id: userId, plan_id: localPlan };
     }
-    return null;
   }
+
+  return profile;
 }
 
 // Guarda el itinerario seleccionado (materia + temas)
@@ -99,74 +102,19 @@ export async function saveUserItinerary(userId: string, subjectId: string, topic
     topic_ids: topicIds,
     updated_at: new Date().toISOString()
   };
-
-  // Guardar preventivamente en LocalStorage para garantizar consistencia local inmediata
   try {
     localStorage.setItem(`edunova_itinerary_${userId}`, JSON.stringify(itineraryData));
   } catch (e) {}
-
-  try {
-    const { data, error } = await supabase
-      .from('user_itineraries')
-      .upsert(itineraryData, { onConflict: 'user_id' });
-      
-    if (error) {
-      if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
-        registerMissingTable('user_itineraries');
-        console.warn('[Supabase] Tabla user_itineraries no encontrada en Supabase. Usando LocalStorage.');
-      } else {
-        console.error('Error saving itinerary to Supabase:', error.message);
-      }
-    }
-    return data;
-  } catch (e) {
-    console.warn('[Supabase] Error conectando a Supabase para itinerario, usando fallback local.');
-    return null;
-  }
+  return null;
 }
 
 // Obtiene el itinerario del estudiante
 export async function getUserItinerary(userId: string) {
-  try {
-    const { data, error } = await supabase
-      .from('user_itineraries')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-      
-    if (error) {
-      if (error.code !== 'PGRST116') {
-        if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
-          registerMissingTable('user_itineraries');
-          console.warn('[Supabase] Tabla user_itineraries no encontrada en Supabase. Recuperando de LocalStorage.');
-        } else {
-          console.warn('Error fetching itinerary from Supabase, pulling from LocalStorage:', error.message);
-        }
-      }
-      
-      // Intentar fallback local
-      const localItineraryStr = localStorage.getItem(`edunova_itinerary_${userId}`);
-      if (localItineraryStr) {
-        try {
-          return JSON.parse(localItineraryStr);
-        } catch (parseErr) {
-          return null;
-        }
-      }
-      return null;
-    }
-    return data;
-  } catch (e) {
-    const localItineraryStr = localStorage.getItem(`edunova_itinerary_${userId}`);
-    if (localItineraryStr) {
-      try {
-        return JSON.parse(localItineraryStr);
-      } catch (parseErr) {
-        return null;
-      }
-    }
-    return null;
+  const localItineraryStr = localStorage.getItem(`edunova_itinerary_${userId}`);
+  if (localItineraryStr) {
+    try { return JSON.parse(localItineraryStr); } catch (e) { return null; }
   }
+  return null;
 }
 
 // Guarda o actualiza el historial de un chat para una materia y tema específico
@@ -183,8 +131,6 @@ export async function saveUserChat(userId: string, subjectId: string, topicId: s
   // Guardar en localStorage para disponibilidad local instantánea
   try {
     localStorage.setItem(`edunova_chat_${userId}_${topicId}`, JSON.stringify(chatData));
-    
-    // También guardar una lista indexada de los temas que tienen chat para listarlos fácilmente en el panel si falla Supabase
     const existingIndexStr = localStorage.getItem(`edunova_chat_index_${userId}`) || '[]';
     const existingIndex = JSON.parse(existingIndexStr);
     if (!existingIndex.some((item: any) => item.topic_id === topicId)) {
@@ -196,16 +142,15 @@ export async function saveUserChat(userId: string, subjectId: string, topicId: s
       });
       localStorage.setItem(`edunova_chat_index_${userId}`, JSON.stringify(existingIndex));
     } else {
-      // Actualizar la fecha de modificación
       const item = existingIndex.find((i: any) => i.topic_id === topicId);
       if (item) {
         item.updated_at = chatData.updated_at;
         localStorage.setItem(`edunova_chat_index_${userId}`, JSON.stringify(existingIndex));
       }
     }
-  } catch (e) {
-    console.error('Error guardando chat localmente:', e);
-  }
+  } catch (e) {}
+
+  if (!isSupabaseConfigured) return null;
 
   try {
     const { data, error } = await supabase
@@ -215,20 +160,26 @@ export async function saveUserChat(userId: string, subjectId: string, topicId: s
     if (error) {
       if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
         registerMissingTable('user_chats');
-        console.warn('[Supabase] Tabla user_chats no encontrada. Usando respaldo de LocalStorage.');
-      } else {
-        console.error('Error saving chat to Supabase:', error.message);
       }
     }
     return data;
   } catch (e) {
-    console.warn('[Supabase] No se pudo guardar el chat en la nube. Respaldo local activo.');
     return null;
   }
 }
 
 // Obtiene el historial de un chat para un tema específico
 export async function getUserChat(userId: string, topicId: string) {
+  const getLocal = () => {
+    const localChatStr = localStorage.getItem(`edunova_chat_${userId}_${topicId}`);
+    if (localChatStr) {
+      try { return JSON.parse(localChatStr); } catch (e) { return null; }
+    }
+    return null;
+  };
+
+  if (!isSupabaseConfigured) return getLocal();
+
   try {
     const { data, error } = await supabase
       .from('user_chats')
@@ -241,35 +192,20 @@ export async function getUserChat(userId: string, topicId: string) {
       if (error.code !== 'PGRST116') {
         if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
           registerMissingTable('user_chats');
-          console.warn('[Supabase] Tabla user_chats no encontrada. Usando LocalStorage.');
-        } else {
-          console.warn('Error fetching chat from Supabase, pulling from LocalStorage:', error.message);
         }
       }
-      
-      const localChatStr = localStorage.getItem(`edunova_chat_${userId}_${topicId}`);
-      if (localChatStr) {
-        const parsed = JSON.parse(localChatStr);
-        return parsed;
-      }
-      return null;
+      return getLocal();
     }
     return data;
   } catch (e) {
-    const localChatStr = localStorage.getItem(`edunova_chat_${userId}_${topicId}`);
-    if (localChatStr) {
-      try {
-        return JSON.parse(localChatStr);
-      } catch (parseErr) {
-        return null;
-      }
-    }
-    return null;
+    return getLocal();
   }
 }
 
 // Obtiene todos los chats del usuario para ver el historial general en pantalla
 export async function getUserAllChats(userId: string) {
+  if (!isSupabaseConfigured) return getLocalAllChats(userId);
+
   try {
     const { data, error } = await supabase
       .from('user_chats')
@@ -280,16 +216,11 @@ export async function getUserAllChats(userId: string) {
     if (error) {
       if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
         registerMissingTable('user_chats');
-        console.warn('[Supabase] Tabla user_chats no encontrada en Supabase. Listando chats guardados localmente.');
-      } else {
-        console.warn('Error fetching all chats from Supabase:', error.message);
       }
-      
       return getLocalAllChats(userId);
     }
 
     const chatsList = data || [];
-    // Deduplicate chats by topic_id
     const uniqueChatsMap = new Map();
     chatsList.forEach((chat: any) => {
       if (chat && chat.topic_id && !uniqueChatsMap.has(chat.topic_id)) {

@@ -26,7 +26,6 @@ import * as Icons from 'lucide-react';
 import { 
   SignedIn, 
   SignedOut, 
-  SignInButton, 
   UserButton, 
   useUser, 
   useAuth,
@@ -52,7 +51,7 @@ import {
 import { EdunovaLogo } from './components/EdunovaLogo';
 import { AntigravityObjects } from './components/AntigravityObjects';
 import supabaseSql from '../supabase-setup.sql?raw';
-import { supabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 type View = 'DASHBOARD' | 'TOPIC_SELECTION' | 'LEARNING' | 'PRICING';
 
@@ -98,32 +97,18 @@ export default function App() {
       if (user) {
         setIsInitializing(true);
         
+        // Determine plan dynamically based on metadata properties
         let activePlanId = (user.unsafeMetadata?.plan as string);
+        let exactName = '';
+        let metadataNeedsUpdate = false;
         
         if (!activePlanId) {
           const chosenPlan = localStorage.getItem('edunova_chosen_plan') || 'free_user';
-          try {
-            await user.update({
-              unsafeMetadata: { plan: chosenPlan }
-            });
-            localStorage.removeItem('edunova_chosen_plan');
-            activePlanId = chosenPlan;
-          } catch (e) {
-            console.error('Error setting default plan in Clerk', e);
-            activePlanId = 'free_user';
-          }
+          activePlanId = chosenPlan;
+          metadataNeedsUpdate = true;
+          localStorage.removeItem('edunova_chosen_plan');
         }
 
-        // Ensure plan is synced to database/localStorage
-        try {
-          await saveUserPlan(user.id, activePlanId);
-        } catch (dbErr) {
-          console.error('Error syncing plan to database:', dbErr);
-        }
-
-        // Determine plan dynamically based on metadata properties
-        let exactName = '';
-        
         const anyUser = user as any;
         const findSubscriptionItemsRecursive = (obj: any, depth = 0): any[] => {
           if (!obj || typeof obj !== 'object' || depth > 5) return [];
@@ -145,41 +130,66 @@ export default function App() {
         };
 
         const allSubItems = findSubscriptionItemsRecursive(anyUser);
+        let externalPlanFound = false;
         if (allSubItems.length > 0) {
           const activeSub = allSubItems.find(sub => sub.active === true || sub.status === 'active') || allSubItems[0];
           const activeSubStr = JSON.stringify(activeSub).toLowerCase();
           const originalPlanName = activeSub?.plan?.name || activeSub?.name || activeSub?.tier_name || activeSub?.product_name || 'Subscripción Activa';
           
           if (activeSubStr.includes('ultra')) {
-            activePlanId = 'ultra';
+            if (activePlanId !== 'ultra') { activePlanId = 'ultra'; metadataNeedsUpdate = true; }
             exactName = originalPlanName;
+            externalPlanFound = true;
           } else if (activeSubStr.includes('pro') || activeSubStr.includes('ai powered')) {
-            activePlanId = 'pro';
+            if (activePlanId !== 'pro') { activePlanId = 'pro'; metadataNeedsUpdate = true; }
             exactName = originalPlanName;
+            externalPlanFound = true;
           } else {
-            activePlanId = 'pro';
+            if (activePlanId !== 'pro') { activePlanId = 'pro'; metadataNeedsUpdate = true; }
             exactName = originalPlanName + ' (Found Sub)'; 
+            externalPlanFound = true;
           }
         } 
         
-        if (activePlanId === 'free_user') {
+        if (!externalPlanFound && activePlanId === 'free_user') {
           const userStr = JSON.stringify(anyUser).toLowerCase();
           if (userStr.includes('ultra') || (has as any)?.({ entitlement: 'ultra' })) {
             activePlanId = 'ultra';
             exactName = 'Ultra AI Powered';
+            metadataNeedsUpdate = true;
           } else if ((has as any)?.({ entitlement: 'pro_ai_powered' }) || (has as any)?.({ entitlement: 'pro' }) || userStr.includes('pro ai powered') || userStr.includes('pro_ai')) {
             activePlanId = 'pro';
             exactName = 'Pro AI Powered';
+            metadataNeedsUpdate = true;
           } else {
             const pmStr = JSON.stringify(anyUser?.publicMetadata || {}).toLowerCase();
             if (pmStr.includes('pro') || pmStr.includes('subscription')) {
               activePlanId = 'pro';
               exactName = 'Pro AI Powered (Metadata)';
+              metadataNeedsUpdate = true;
             } else if (anyUser?.entitlements && anyUser.entitlements.length > 0) {
               activePlanId = 'pro';
               exactName = anyUser.entitlements[0]?.name || 'Pro AI Powered (Entitlement)';
+              metadataNeedsUpdate = true;
             }
           }
+        }
+
+        if (metadataNeedsUpdate) {
+           try {
+             await user.update({
+               unsafeMetadata: { ...user.unsafeMetadata, plan: activePlanId }
+             });
+           } catch (e) {
+             console.error('Error setting updated plan in Clerk', e);
+           }
+        }
+
+        // Ensure plan is synced to database/localStorage ALWAYS with updated value
+        try {
+          await saveUserPlan(user.id, activePlanId);
+        } catch (dbErr) {
+          console.error('Error syncing plan to database:', dbErr);
         }
 
         const foundPlan = PLANS.find(p => p.id === activePlanId);
@@ -344,11 +354,13 @@ export default function App() {
         localStorage.setItem(`edunova_chat_index_${user.id}`, JSON.stringify(index));
 
         // Attempt Cloud Supabase delete if available
-        await supabase
-          .from('user_chats')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('topic_id', topicId);
+        if (isSupabaseConfigured) {
+          await supabase
+            .from('user_chats')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('topic_id', topicId);
+        }
 
         // Update list
         const updated = await getUserAllChats(user.id);
@@ -626,7 +638,7 @@ export default function App() {
         </aside>
 
         {/* ================= MAIN CONTENT WORKSPACE ================= */}
-        <main className={`flex-1 flex flex-col bg-transparent relative h-screen transition-all ${currentView === 'PRICING' ? 'z-[60] overflow-visible' : 'z-10 overflow-hidden'}`}>
+        <main className="flex-1 flex flex-col bg-transparent relative h-screen transition-all z-10 overflow-hidden">
           
           {/* Antigravity floating movement decoration */}
           <AntigravityObjects />
@@ -655,13 +667,7 @@ export default function App() {
               
               {/* === VIEW 1: PRICING MODAL (PREMIUM VIEW) === */}
               {currentView === 'PRICING' && (
-                <motion.div
-                  key="pricing"
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                  className="max-w-4xl mx-auto px-6 py-12"
-                >
+                <div className="max-w-4xl mx-auto px-6 py-12">
                   <div className="mb-6">
                     <button 
                       onClick={() => setCurrentView('DASHBOARD')}
@@ -671,11 +677,9 @@ export default function App() {
                     </button>
                   </div>
                   
-                  {/* Outer glass container enclosing Pricing widget */}
-                  <div className="bg-white/[0.03] border border-white/10 p-4 md:p-10 rounded-[44px] shadow-2xl backdrop-blur-2xl">
-                    <PricingModal />
-                  </div>
-                </motion.div>
+                  {/* Pricing widget */}
+                  <PricingModal />
+                </div>
               )}
 
               {/* === VIEW 2: TOPIC SELECTION === */}

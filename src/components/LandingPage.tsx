@@ -30,7 +30,7 @@ export const LandingPage: React.FC = () => {
             >
               Planes de Estudio
             </a>
-            <SignInButton mode="modal">
+            <SignInButton mode="modal" fallbackRedirectUrl="/">
               <button className="bg-[#1A2B5E] hover:bg-[#2563EB] text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98]">
                 Iniciar Sesión
               </button>
@@ -60,7 +60,7 @@ export const LandingPage: React.FC = () => {
         </p>
 
         <div className="pt-6 flex flex-col sm:flex-row justify-center items-center gap-4">
-          <SignUpButton mode="modal">
+          <SignUpButton mode="modal" fallbackRedirectUrl="/">
             <button className="bg-gradient-to-tr from-[#2563EB] to-[#10B981] text-white px-9 py-4.5 rounded-full font-bold text-sm uppercase tracking-wider hover:shadow-xl hover:shadow-emerald-500/10 hover:translate-y-[-1px] transition-all active:scale-95 border border-emerald-300/20">
               Comenzar Itinerario Gratis
             </button>
@@ -128,13 +128,13 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Pricing Section with clean spacing */}
-      <section id="pricing" className="py-24 max-w-5xl mx-auto px-6 relative z-10">
+      <section id="pricing" className="py-24 max-w-5xl mx-auto px-6 relative z-10 w-full">
         <div className="text-center mb-12 space-y-4">
           <span className="text-[#6B7280] text-[10px] uppercase font-bold tracking-widest block font-mono">Elige tu Nivel de Acceso</span>
           <h2 className="text-3xl md:text-4xl font-display font-bold text-[#1A2B5E] tracking-tight">Acceso Flexible a tu Tutoría</h2>
           <div className="w-12 h-0.5 bg-zinc-300 mx-auto" />
         </div>
-        <div className="bg-white rounded-3xl border border-[#D1D5DB] shadow-md p-2">
+        <div className="w-full">
           <PricingModal />
         </div>
       </section>

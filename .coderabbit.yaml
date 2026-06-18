@@ -1,0 +1,37 @@
+language: "es"
+early_access: false
+reviews:
+  profile: "software developer"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+chat:
+  auto_reply: true
+instructions: |
+  **Resumen del Proyecto: EduNova LMS**
+  
+  EduNova LMS es una plataforma educativa interactiva construida con un stack de tecnología moderna:
+  - **Frontend:** React, Vite, Tailwind CSS. Se usa `motion/react` para animaciones y `lucide-react` para iconos.
+  - **Backend:** Express.js que interactúa con la API de Gemini (`@google/genai`).
+  - **Autenticación:** Proveída por Clerk (`@clerk/clerk-react`), que controla el acceso de los usuarios a las rutas protegidas.
+  - **Base de Datos:** Supabase (PostgreSQL).
+  
+  **Gestión de Estados y Arquitectura:**
+  - El estado principal reside en `App.tsx`, donde se controlan las vistas: `DASHBOARD`, `TOPIC_SELECTION`, `LEARNING` y `PRICING`.
+  - Se utilizan interfaces precisas (en `src/types.ts`) para la lógica de la app, que incluye perfiles y aprendizaje socrático:
+    - `PlanType` (free_user, pro, ultra) y utilidades de membresía asociadas.
+    - `Topic` y `Subject` que estructuran el contenido educativo.
+    - `LearningSession` y `Message`, los cuales manejan el historial de interacción del usuario con la IA.
+  - El flujo de la IA tiene como proxy a `server.ts` para no exponer las claves API de Gemini al lado del cliente (Navegador).
+  - La interacción de la BBDD se encuentra abstraída en servicios (`src/services/db.ts`) donde se maneja tanto guardado local como en remoto.
+  
+  **Directrices de revisión:**
+  - Asegurar tipado de TypeScript.
+  - Respetar la arquitectura Full-Stack, manteniendo rutas API (`/api/*`) seguras y sin llamadas externas a LLMs desde el lado del cliente (Vite).
+  - Promover el uso estricto de Tailwind CSS para la coherencia en la interfaz (sin CSS en JS u hojas en línea).
+  - No exponer `GEMINI_API_KEY` u otras claves secretas. En el frontend, asegurarse de que Clerk se utilice para gestionar el inicio y cierre de sesión correctamente.

@@ -10,19 +10,34 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Initialize Gemini
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Define AI globally but initialize lazily or handle undefined key
+let ai: GoogleGenAI | null = null;
+try {
+  if (process.env.GEMINI_API_KEY) {
+    ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+} catch (e) {
+  console.warn("Failed to initialize GoogleGenAI. Is GEMINI_API_KEY missing?");
+}
 
 // Initialize Supabase Client
-const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
+console.log("VITE_SUPABASE_URL is:", JSON.stringify(process.env.VITE_SUPABASE_URL));
+let urlString = process.env.VITE_SUPABASE_URL ? process.env.VITE_SUPABASE_URL.trim() : "https://placeholder.supabase.co";
+if (urlString.startsWith("//")) {
+  urlString = "https:" + urlString;
+} else if (!urlString.startsWith("http")) {
+  urlString = "https://" + urlString;
+}
+const supabaseUrl = urlString;
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY ? process.env.VITE_SUPABASE_ANON_KEY.trim() : (process.env.VITE_SUPABASE_PUBLISHABLE_KEY ? process.env.VITE_SUPABASE_PUBLISHABLE_KEY.trim() : "placeholder_key");
+console.log("Using supabaseUrl:", JSON.stringify(supabaseUrl));
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Clasificación heurística de preguntas para ahorrar el 50% de las consultas de cuota API de Gemini
@@ -120,6 +135,10 @@ TU MISIÓN: En lugar de dar respuestas directas, haz preguntas que guíen al est
 
     let cachedResponse: string | null = null;
     let queryEmbedding: number[] | null = null;
+
+    if (!ai) {
+      return res.status(500).json({ error: "El servicio de IA no está configurado (Falta GEMINI_API_KEY). Contáctate con soporte." });
+    }
 
     // 3. Si es Factual, procedemos a cachear con Embeddings (gemini-embedding-2-preview)
     if (isFactual) {
