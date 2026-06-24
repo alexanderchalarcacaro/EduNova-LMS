@@ -10,7 +10,7 @@ import { getUserAllChats, deleteChatMessage } from './lib/supabase';
 import SocraticChat from './components/SocraticChat';
 import { TopicContentView } from './components/TopicContentView';
 import PricingModal, { PLANS } from './components/PricingModal';
-import SanityStudio from './studio';
+const SanityStudio = React.lazy(() => import('./studio'));
 import { EdunovaLogo } from './components/EdunovaLogo';
 import { AntigravityObjects } from './components/AntigravityObjects';
 import { LandingPage } from './components/LandingPage';
@@ -549,7 +549,14 @@ export default function App({
             {renderLucide('Home', 15)} Volver al Campus
           </button>
         </div>
-        <SanityStudio />
+        <React.Suspense fallback={
+          <div className="h-full w-full flex flex-col items-center justify-center bg-[#05060f] text-[#98ca3f] gap-3">
+            <div className="w-10 h-10 border-4 border-[#98ca3f]/20 border-t-[#98ca3f] rounded-full animate-spin" />
+            <p className="text-sm font-medium">Cargando Sanity Studio...</p>
+          </div>
+        }>
+          <SanityStudio />
+        </React.Suspense>
       </div>
     );
   }
