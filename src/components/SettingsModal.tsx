@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Settings, User, GraduationCap, X, Check, Cloud, Sparkles, BookOpen, ExternalLink, ShieldCheck
 } from 'lucide-react';
