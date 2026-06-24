@@ -1,52 +1,52 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { ClerkProvider } from '@clerk/clerk-react';
-import { dark } from '@clerk/themes';
-import App from './App.tsx';
-import './index.css';
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
+import { ClerkProvider, useUser, useClerk } from '@clerk/clerk-react'
+import App from './App.tsx'
+import './index.css'
 
-// Silenciar los errores inofensivos de WebSocket de Vite por tener HMR deshabilitado
-window.addEventListener('unhandledrejection', (event) => {
-  if (event.reason && (event.reason.message?.includes('WebSocket') || event.reason.toString().includes('WebSocket'))) {
-    event.preventDefault();
-  }
-});
+const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-// Sobrescribir console.warn para ocultar la advertencia de desarrollo de Clerk si es necesario
+function ClerkAppWrapper() {
+  const { isLoaded, user } = useUser();
+  const clerk = useClerk();
+  return (
+    <App 
+      guestMode={false} 
+      clerkUser={user} 
+      clerkSignOut={clerk.signOut} 
+      clerkLoaded={isLoaded} 
+    />
+  );
+}
+
+// Filter system warnings to keep the console clean and professional
 const originalWarn = console.warn;
-console.warn = (...args) => {
-  if (args[0] && typeof args[0] === 'string' && args[0].includes('Clerk has been loaded with development keys')) {
-    return;
+console.warn = (...args: any[]) => {
+  const firstArg = args[0];
+  if (typeof firstArg === 'string') {
+    if (
+      firstArg.includes('Clerk: Clerk has been loaded with development keys') ||
+      firstArg.includes('React Router Future Flag Warning') ||
+      firstArg.includes('v7_relativeSplatPath')
+    ) {
+      return;
+    }
   }
   originalWarn(...args);
 };
 
-const originalError = console.error;
-console.error = (...args) => {
-  if (args[0] && typeof args[0] === 'string' && args[0].includes('[vite] failed to connect to websocket')) {
-    return;
-  }
-  originalError(...args);
-};
-
-const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
-if (!PUBLISHABLE_KEY) {
-  throw new Error("Missing Publishable Key");
-}
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ClerkProvider 
-      publishableKey={PUBLISHABLE_KEY} 
-      afterSignOutUrl="/" 
-      appearance={{
-        baseTheme: dark,
-        variables: { colorPrimary: '#2563EB' }
-      }}
-    >
-      <App />
-    </ClerkProvider>
-  </StrictMode>,
-);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {clerkPubKey ? (
+        <ClerkProvider publishableKey={clerkPubKey}>
+          <ClerkAppWrapper />
+        </ClerkProvider>
+      ) : (
+        <App guestMode={true} />
+      )}
+    </BrowserRouter>
+  </React.StrictMode>,
+)
 

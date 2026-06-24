@@ -1,404 +1,453 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Loader2, RotateCcw, AlertCircle, CircleAlert, Sparkles, User, ShieldAlert, X, Info, Trash2 } from 'lucide-react';
-import { Subject, Topic, Message } from '../types';
-import { getUserChat, saveUserChat } from '../services/db';
-import { EdunovaLogo } from './EdunovaLogo';
+import { Send, ArrowLeft, RefreshCw, SendHorizontal, Zap, Sparkles, User } from 'lucide-react';
+import { Subject, Topic, ChatMessage } from '../types';
+import { manageChatUseCase } from '../core/HexagonalFactory';
 
 interface SocraticChatProps {
   userId: string;
   subject: Subject;
   topic: Topic;
-  onSessionComplete?: () => void;
+  onBack?: () => void;
+  initialUserMessage?: string;
+  onClearInitialMessage?: () => void;
 }
 
-export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: SocraticChatProps) => {
-  const getDefaultGreeting = () => [
-    { 
-      role: 'model', 
-      text: `¡Hola! Soy tu tutor de EduNova. Hoy vamos a explorar "${topic.name}" dentro de la materia de ${subject.name}.\n\nPara iniciar nuestro camino de razonamiento lógico: ¿Qué es lo primero que te viene a la mente cuando piensas en este tema o qué te gustaría profundizar hoy?` 
-    } as Message
-  ];
+// Lightweight, 100% bulletproof inline markdown formatter
+function FormattedMessage({ text }: { text: string }) {
+  const paragraphs = text.split('\n\n');
+  return (
+    <div className="space-y-3 font-sans text-[13px] leading-relaxed text-zinc-200">
+      {paragraphs.map((para, i) => {
+        // Special render for bold, lists, and quotes
+        let cleanText = para;
+        const isHeader = cleanText.startsWith('#');
+        const isList = cleanText.startsWith('- ') || cleanText.startsWith('* ') || /^\d+\./.test(cleanText);
+        
+        if (isHeader) {
+          cleanText = cleanText.replace(/^#+\s+/, '');
+          return <h4 key={i} className="text-sm font-sans font-extrabold text-white tracking-tight mt-4 first:mt-0">{cleanText}</h4>;
+        }
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isHistorialLoaded, setIsHistorialLoaded] = useState(false);
-  const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
+        if (isList) {
+          const items = para.split('\n');
+          return (
+            <ul key={i} className="list-disc pl-5 space-y-1.5 list-inside text-zinc-300">
+              {items.map((item, idx) => {
+                const formattedItem = item.replace(/^[-*\d.]+\s+/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                return (
+                  <li 
+                    key={idx} 
+                    dangerouslySetInnerHTML={{ __html: formattedItem }} 
+                  />
+                );
+              })}
+            </ul>
+          );
+        }
+
+        // Standard rich parsing for inline double asterisks **bold**
+        const richInlineText = cleanText.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
+        return (
+          <p 
+            key={i} 
+            dangerouslySetInnerHTML={{ __html: richInlineText }} 
+            className="text-zinc-200"
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+export default function SocraticChat({ 
+  userId, 
+  subject, 
+  topic, 
+  onBack,
+  initialUserMessage,
+  onClearInitialMessage
+}: SocraticChatProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [isAiResponding, setIsAiResponding] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load chat history whenever topic or user changes
-  useEffect(() => {
-    async function loadChatHistory() {
-      if (!userId || !topic?.id) return;
-      setIsLoading(true);
-      setIsHistorialLoaded(false);
-      try {
-        const chatData = await getUserChat(userId, topic.id);
-        if (chatData && chatData.messages && chatData.messages.length > 0) {
-          setMessages(chatData.messages);
-          setIsHistorialLoaded(true);
-        } else {
-          setMessages(getDefaultGreeting());
-        }
-      } catch (err) {
-        console.error('Error cargando historial:', err);
-        setMessages(getDefaultGreeting());
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadChatHistory();
-  }, [userId, topic?.id, subject?.id]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isLoading]);
-
-  const handleConfirmReset = async () => {
-    const resetGreeting = getDefaultGreeting();
-    setMessages(resetGreeting);
-    setIsHistorialLoaded(false);
-    setIsCleanModalOpen(false);
-    if (userId) {
-      try {
-        await saveUserChat(userId, subject.id, topic.id, topic.name, resetGreeting);
-      } catch (e) {
-        console.error('Error guardando reset de chat:', e);
-      }
-    }
+  // Helper to persist to the database/localStorage while keeping hidden messages intact
+  const saveHistory = async (newVisibleMessages: ChatMessage[]) => {
+    const fullHistory = await manageChatUseCase.fetchHistory(userId, subject.id, topic.id);
+    const lastCleared = localStorage.getItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`);
+    
+    // Hidden messages are those created before or equal to lastCleared
+    const hiddenMessages = lastCleared
+      ? fullHistory.filter(msg => new Date(msg.timestamp).getTime() <= new Date(lastCleared).getTime())
+      : [];
+      
+    const combined = [...hiddenMessages, ...newVisibleMessages];
+    await manageChatUseCase.persistMessage(userId, subject.id, topic.id, topic.name, combined);
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  // Load chat session history on mount
+  useEffect(() => {
+    async function loadHistory() {
+      const history = await manageChatUseCase.fetchHistory(userId, subject.id, topic.id);
+      const lastCleared = localStorage.getItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`);
+      
+      const visible = lastCleared
+        ? history.filter(msg => new Date(msg.timestamp).getTime() > new Date(lastCleared).getTime())
+        : history;
+      
+      if (visible.length > 0) {
+        setMessages(visible);
+      } else {
+        // If no prior history or cleared, trigger initial Socratic opening prompt
+        const openingMessage: ChatMessage = {
+          id: `initial-opening-${Date.now()}`,
+          role: 'model',
+          content: `¡Hola! Me alegra guiarte en el estudio de **${topic.name}**. 
+ 
+Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con tus propias palabras, ¿cuál dirías que es tu entendimiento o intuición inicial acerca de este concepto en tu vida cotidiana, o qué pregunta te urge resolver de primero?`,
+          timestamp: lastCleared ? new Date(new Date(lastCleared).getTime() + 1000).toISOString() : new Date().toISOString()
+        };
+        setMessages([openingMessage]);
+        await saveHistory([openingMessage]);
+      }
+    }
+    loadHistory();
+  }, [userId, subject.id, topic.id, topic.name]);
 
-    const userMessage: Message = { role: 'user', text: input };
-    const newHistory = [...messages, userMessage];
-    setMessages(newHistory);
-    setInput('');
-    setIsLoading(true);
+  // Handle trigger message from parent (e.g. reflections or mini-challenges)
+  useEffect(() => {
+    if (initialUserMessage) {
+      const triggerMessage = async () => {
+        const userMsg: ChatMessage = {
+          id: `msg-${Date.now()}-user-trigger`,
+          role: 'user',
+          content: initialUserMessage,
+          timestamp: new Date().toISOString()
+        };
+        
+        const updatedMessages = [...messages, userMsg];
+        setMessages(updatedMessages);
+        setIsAiResponding(true);
+        if (onClearInitialMessage) onClearInitialMessage();
+
+        // Persist optimistic update
+        await saveHistory(updatedMessages);
+
+        try {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              topicName: topic.name,
+              difficulty: topic.difficulty,
+              messages: updatedMessages
+            })
+          });
+
+          if (!response.ok) throw new Error('Fallo al obtener respuesta del servidor');
+
+          const data = await response.json();
+          const modelMessage: ChatMessage = {
+            id: `msg-${Date.now()}-model`,
+            role: 'model',
+            content: data.content,
+            timestamp: new Date().toISOString()
+          };
+
+          const finalMessages = [...updatedMessages, modelMessage];
+          setMessages(finalMessages);
+          await saveHistory(finalMessages);
+        } catch (err) {
+          console.error(err);
+          const errorMessage: ChatMessage = {
+            id: `msg-${Date.now()}-err`,
+            role: 'model',
+            content: `⚠️ Disculpa, hubo un desfase al conectar con mi núcleo de estudio. ¿Podríamos re-intentar enviar tu última idea de nuevo?`,
+            timestamp: new Date().toISOString()
+          };
+          const errMessages = [...updatedMessages, errorMessage];
+          setMessages(errMessages);
+          await saveHistory(errMessages);
+        } finally {
+          setIsAiResponding(false);
+        }
+      };
+
+      if (messages.length > 0) {
+        triggerMessage();
+      }
+    }
+  }, [initialUserMessage, messages, userId, subject.id, topic.id, topic.name, onClearInitialMessage]);
+
+  // Handle messages auto-scroll
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isAiResponding]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim() || isAiResponding) return;
+
+    const userMessage: ChatMessage = {
+      id: `msg-${Date.now()}-user`,
+      role: 'user',
+      content: inputText,
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    setInputText('');
+    setIsAiResponding(true);
+
+    // Persist optimistic update
+    await saveHistory(updatedMessages);
 
     try {
-      const response = await fetch('/api/tutor', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject: subject.name,
-          topic,
-          history: newHistory
+          topicName: topic.name,
+          difficulty: topic.difficulty,
+          messages: updatedMessages
         })
       });
-      
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error de comunicación con el tutor');
+        throw new Error('Fallo al obtener respuesta del servidor');
       }
 
       const data = await response.json();
-      if (data.text) {
-        const updatedMessages: Message[] = [...newHistory, { 
-          role: 'model', 
-          text: data.text,
-          cached: data.cached,
-          classification: data.classification
-        }];
-        setMessages(updatedMessages);
+      const modelMessage: ChatMessage = {
+        id: `msg-${Date.now()}-model`,
+        role: 'model',
+        content: data.content,
+        timestamp: new Date().toISOString()
+      };
 
-        // Save asynchronously in backend / LocalStorage
-        if (userId) {
-          saveUserChat(userId, subject.id, topic.id, topic.name, updatedMessages).catch(e => {
-            console.error('Error auto-saving converse:', e);
-          });
-        }
-      }
-    } catch (error: any) {
-      console.error('Chat error:', error);
-      const errorHistory: Message[] = [...newHistory, { 
-        role: 'model', 
-        text: `Lo siento, hubo un problema: ${error.message}. Intenta enviar el mensaje de nuevo o verifica si el límite de solicitudes de la API se reanudará pronto.` 
-      }];
-      setMessages(errorHistory);
-      if (userId) {
-        saveUserChat(userId, subject.id, topic.id, topic.name, errorHistory).catch(e => {});
-      }
+      const finalMessages = [...updatedMessages, modelMessage];
+      setMessages(finalMessages);
+      await saveHistory(finalMessages);
+    } catch (err: any) {
+      console.error(err);
+      const errorMessage: ChatMessage = {
+        id: `msg-${Date.now()}-err`,
+        role: 'model',
+        content: `⚠️ Disculpa, hubo un desfase al conectar con mi núcleo de estudio. ¿Podríamos re-intentar enviar tu última idea de nuevo?`,
+        timestamp: new Date().toISOString()
+      };
+      const errMessages = [...updatedMessages, errorMessage];
+      setMessages(errMessages);
+      await saveHistory(errMessages);
     } finally {
-      setIsLoading(false);
+      setIsAiResponding(false);
     }
   };
 
+  const handleConfirmClear = async () => {
+    const clearTime = new Date().toISOString();
+    localStorage.setItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`, clearTime);
+    
+    const openingMessage: ChatMessage = {
+      id: `initial-opening-restart-${Date.now()}`,
+      role: 'model',
+      content: `¡Listo! Volvamos a empezar sobre **${topic.name}**. 
+
+¿Qué es lo primero que se te viene a la mente cuando piensas en este tema, o cuál es tu teoría inicial sobre cómo funciona?`,
+      timestamp: new Date(new Date(clearTime).getTime() + 1000).toISOString()
+    };
+    setMessages([openingMessage]);
+    await saveHistory([openingMessage]);
+    setShowClearConfirm(false);
+  };
+
   return (
-    <div className="flex flex-col h-full bg-[#131314] text-zinc-100 select-none">
-      {/* Header */}
-      <div className="px-6 py-4 flex items-center justify-between border-b border-[#202124] bg-[#0E0E10]/40 backdrop-blur-md">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h3 className="font-display font-medium text-lg text-white">{topic.name}</h3>
-            {isHistorialLoaded && (
-              <span className="inline-flex text-[9px] bg-zinc-800 text-zinc-400 border border-[#303134] px-2 py-0.5 rounded-full font-mono font-medium">
-                Historial recuperado
-              </span>
-            )}
+    <div className="flex flex-col h-full bg-[#0c1424] rounded-2xl border border-[#1e293b] overflow-hidden relative">
+      {/* Upper bar panels */}
+      <div className="px-5 py-3.5 bg-[#121f3d]/60 border-b border-[#1e293b] flex items-center justify-between shrink-0 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button 
+              onClick={onBack}
+              className="p-1.5 text-zinc-400 hover:text-white hover:bg-[#1e293b] rounded-lg transition-all"
+            >
+              <ArrowLeft size={16} />
+            </button>
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${subject.color || 'bg-platzi-blue'} pulsy animate-pulse`} />
+              <h3 className="text-xs font-mono font-bold tracking-wider text-zinc-300 uppercase">
+                {subject.name}
+              </h3>
+            </div>
+            <h2 className="text-sm font-sans font-bold text-white tracking-tight mt-0.5">
+              Tutoría Activa: {topic.name}
+            </h2>
           </div>
-          <p className="text-xs text-zinc-400 font-medium">
-            {subject.name} &bull; Tutoría Socrática Activa
-          </p>
         </div>
+
         <div className="flex items-center gap-2">
+          <span className="text-[9px] font-mono font-extrabold uppercase bg-platzi-green/10 border border-platzi-green/20 px-2 py-0.5 rounded-full text-platzi-green">
+            {topic.difficulty}
+          </span>
           <button
-            onClick={() => setIsCleanModalOpen(true)}
-            title="Limpiar conversación (Manteniendo Caché Vectorial)"
-            className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-all border border-zinc-850/60"
+            onClick={() => setShowClearConfirm(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-sans font-bold uppercase tracking-wider text-zinc-400 hover:text-rose-450 hover:bg-rose-950/20 border border-transparent hover:border-rose-900/30 rounded-lg transition-all cursor-pointer"
+            id="clear-chat-btn"
+            title="Limpiar chat con el tutor"
           >
-            <RotateCcw size={14} className="text-zinc-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider hidden sm:block">Limpiar Conversación</span>
+            <RefreshCw size={12} />
+            <span>Limpiar Chat</span>
           </button>
-          
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1e1f20] border border-[#2d2e30] rounded-lg">
-            <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-            <span className="text-[10px] font-mono font-bold text-zinc-300">gemini-3.1-flash-lite</span>
-          </div>
         </div>
       </div>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-8 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent scroll-smooth">
-        <div className="max-w-3xl mx-auto space-y-10">
-          <AnimatePresence initial={false}>
-            {messages.map((msg, idx) => (
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+        <AnimatePresence initial={false}>
+          {messages.map((msg) => {
+            const isModel = msg.role === 'model';
+            return (
               <motion.div
-                key={idx}
-                initial={{ opacity: 0, y: 12 }}
+                key={msg.id}
+                initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} items-start gap-4`}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className={`flex w-full items-start gap-3.5 ${isModel ? 'justify-start' : 'justify-end'}`}
               >
-                {/* Assistant icon */}
-                {msg.role === 'model' && (
-                  <div className="w-9 h-9 rounded-full bg-[#1e1f20] border border-[#2d2e30] flex items-center justify-center shrink-0 shadow-sm">
-                    {/* Sparkle emblem matching Edunova mint-green sparkle */}
-                    <svg viewBox="0 0 100 100" className="w-5 h-5 fill-emerald-400" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M 50 10 C 50 30, 70 50, 90 50 C 70 50, 50 70, 50 90 C 50 70, 30 50, 10 50 C 30 50, 50 30, 50 10 Z" />
-                    </svg>
+                {isModel && (
+                  <div className="w-8 h-8 rounded-xl bg-[#1e293b] text-platzi-green border border-platzi-green/20 flex items-center justify-center font-bold shrink-0 mt-1">
+                    <Sparkles size={14} />
                   </div>
                 )}
-
-                {/* Message Body */}
-                <div className={`max-w-[85%] ${msg.role === 'user' ? 'w-fit' : 'flex-1 space-y-1'}`}>
-                  <div className={`${
-                    msg.role === 'user'
-                      ? 'bg-[#1e1f20] border border-[#2d2e30] text-zinc-100 px-5 py-3 rounded-2xl rounded-tr-none shadow-sm'
-                      : 'text-zinc-200 text-[15px] leading-relaxed whitespace-pre-wrap font-sans'
-                  }`}>
-                    {msg.text}
+                <div className={`max-w-[78%] rounded-2xl px-5 py-4 ${
+                  isModel 
+                    ? 'bg-[#0f172a]/70 border border-[#1e293b] rounded-tl-none shadow-sm' 
+                    : 'bg-platzi-green/10 border border-platzi-green/25 rounded-tr-none text-white'
+                }`}>
+                  <div className="flex items-center gap-1.5 mb-2.5 shrink-0">
+                    {isModel ? (
+                      <>
+                        <span className="text-[10px] font-mono font-black text-platzi-green tracking-wider uppercase">TUTOR SOCRÁTICO</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-[10px] font-mono font-black text-[#64748b] tracking-wider uppercase">TU RESPUESTA</span>
+                      </>
+                    )}
                   </div>
-
-                  {/* Metadata Indicators for AI Responses */}
-                  {msg.role === 'model' && msg.classification && (
-                    <div className="pt-2 flex flex-wrap gap-2 items-center">
-                      {msg.cached ? (
-                        <span className="inline-flex items-center gap-1.5 text-[9px] uppercase tracking-wider bg-emerald-950/40 text-emerald-300 border border-emerald-800/50 px-2.5 py-0.5 rounded-full font-bold">
-                          ⚡ Caché Semántico (&lt; 100ms &bull; 0 Cuota)
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-[9px] uppercase tracking-wider bg-zinc-900 text-zinc-400 border border-zinc-800 px-2.5 py-0.5 rounded-full font-semibold">
-                          🧠 Socrático Directo
-                        </span>
-                      )}
-                      
-                      <span className="text-[9px] uppercase tracking-wider text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded font-mono font-medium">
-                        Modo {msg.classification}
-                      </span>
-                    </div>
-                  )}
+                  <FormattedMessage text={msg.content} />
                 </div>
-
-                {/* User avatar icon */}
-                {msg.role === 'user' && (
-                  <div className="w-9 h-9 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center shrink-0 shadow-sm text-indigo-300 text-xs font-bold uppercase select-none">
-                    Tú
+                {!isModel && (
+                  <div className="w-8 h-8 rounded-xl bg-[#121f3d] border border-slate-700 flex items-center justify-center text-zinc-350 font-bold shrink-0 mt-1">
+                    <User size={14} />
                   </div>
                 )}
               </motion.div>
-            ))}
-          </AnimatePresence>
+            );
+          })}
 
-          {/* Loading status indicator */}
-          {isLoading && (
+          {isAiResponding && (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex justify-start items-start gap-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-start gap-3.5 justify-start"
             >
-              <div className="w-9 h-9 rounded-full bg-[#1e1f20] border border-[#2d2e30] flex items-center justify-center shrink-0 shadow-sm animate-pulse">
-                <svg viewBox="0 0 100 100" className="w-5 h-5 fill-emerald-500" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M 50 10 C 50 30, 70 50, 90 50 C 70 50, 50 70, 50 90 C 50 70, 30 50, 10 50 C 30 50, 50 30, 50 10 Z" />
-                </svg>
+              <div className="w-8 h-8 rounded-xl bg-[#1e293b] text-platzi-green border border-platzi-green/20 flex items-center justify-center font-bold shrink-0 mt-1 animate-pulse">
+                <Sparkles size={14} />
               </div>
-              <div className="px-5 py-3 bg-[#1e1f20]/40 border border-[#2d2e30]/50 rounded-2xl rounded-tl-none flex items-center gap-2">
-                <div className="flex gap-1.5 py-1">
-                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="bg-[#0f172a]/70 border border-[#1e293b] rounded-2xl rounded-tl-none px-5 py-4 max-w-[78%] shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 bg-platzi-green rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-platzi-green rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-platzi-green rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <span className="text-[10px] font-mono font-black text-platzi-green uppercase tracking-wider pl-1.5">
+                    EL TUTOR ESTÁ ANALIZANDO TU RESPUESTA...
+                  </span>
                 </div>
               </div>
             </motion.div>
           )}
-        </div>
+        </AnimatePresence>
+        <div ref={scrollRef} />
       </div>
 
-      {/* Floating Pill Input Bar */}
-      <div className="p-4 md:p-6 bg-[#131314]">
-        <div className="max-w-3xl mx-auto space-y-3">
-          <div className="relative flex items-center bg-[#1e1f20] border border-[#303134] rounded-full shadow-lg hover:border-[#424447] focus-within:border-zinc-500 focus-within:ring-2 focus-within:ring-zinc-800 transition-all">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder={`Pregunta a la Tutoría Socrática de EduNova...`}
-              className="w-full bg-transparent border-none text-zinc-100 placeholder-zinc-500 rounded-full py-4 pl-6 pr-16 focus:outline-none focus:ring-0 text-[15px]"
-            />
-            
-            <div className="absolute right-3 top-2 flex items-center gap-2">
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isLoading}
-                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                  input.trim() && !isLoading 
-                    ? 'bg-emerald-500 text-slate-900 font-bold scale-100 hover:bg-emerald-400' 
-                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed scale-95'
-                }`}
-              >
-                <Send size={16} />
-              </button>
-            </div>
-          </div>
-          
-          <p className="text-[9px] uppercase tracking-widest text-center text-zinc-600 font-bold font-mono">
-            EduNova es una Inteligencia de Tutoría Socrática y puede cometer errores.
-          </p>
+      {/* Input zone panel */}
+      <form onSubmit={handleSubmit} className="p-4 bg-[#0a0f1d] border-t border-[#1e293b] backdrop-blur-md shrink-0">
+        <div className="flex items-center gap-3 bg-[#121f3d]/60 border border-[#1e293b] rounded-2xl px-4.5 py-3 focus-within:border-platzi-green/50 focus-within:ring-2 focus-within:ring-platzi-green/5 transition-all duration-300">
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="Introduce tu razonamiento, intuición o duda aquí..."
+            disabled={isAiResponding}
+            className="flex-1 bg-transparent text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={!inputText.trim() || isAiResponding}
+            className={`p-2 rounded-xl transition-all duration-300 ${
+              inputText.trim() && !isAiResponding
+                ? 'bg-platzi-green text-[#0c1424] hover:bg-emerald-400 shadow-md shadow-platzi-green/10 hover:scale-[1.02] active:scale-[0.98]'
+                : 'text-zinc-600 bg-transparent cursor-default'
+            }`}
+          >
+            <SendHorizontal size={15} />
+          </button>
         </div>
-      </div>
+        <p className="text-[10px] font-mono text-zinc-500 mt-2 text-center">
+          Consejo: Las respuestas abiertas invitan a un análisis socrático más interesante y profundo.
+        </p>
+      </form>
 
-      {/* Modal de Limpieza Inteligente / Caché Semántico vectorizado */}
+      {/* Custom Confirmation Modal overlay */}
       <AnimatePresence>
-        {isCleanModalOpen && (
-          <motion.div
+        {showClearConfirm && (
+          <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
-            onClick={() => setIsCleanModalOpen(false)}
+            className="absolute inset-0 z-50 bg-[#070b13]/85 backdrop-blur-sm flex items-center justify-center p-5"
           >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              transition={{ type: "spring", duration: 0.4 }}
-              className="bg-[#1e1f20] border border-[#2d2e30] rounded-3xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col"
-              onClick={(e) => e.stopPropagation()}
+            <motion.div 
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              className="bg-[#0f172a] border border-rose-500/25 max-w-sm w-full rounded-2xl p-6 shadow-2xl space-y-4"
             >
-              {/* Header */}
-              <div className="px-6 py-5 border-b border-zinc-800/60 flex items-center justify-between bg-zinc-900/40">
-                <div className="flex items-center gap-3">
-                  <EdunovaLogo size={28} showText={false} />
-                  <div>
-                    <h3 className="font-display font-semibold text-white text-md">Limpieza de Chat Inteligente</h3>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold font-mono">Modo de Viabilidad Financiera (FinOps)</p>
-                  </div>
+              <div className="flex items-center gap-3 text-rose-450">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                  <RefreshCw size={16} className="text-rose-400" />
                 </div>
-                <button 
-                  onClick={() => setIsCleanModalOpen(false)}
-                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              {/* Content */}
-              <div className="p-6 space-y-5 text-xs text-zinc-300 leading-relaxed max-h-[70vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                <div className="flex items-start gap-3 bg-[#131314]/80 border border-zinc-800 rounded-2xl p-4">
-                  <Sparkles size={18} className="text-emerald-400 shrink-0 mt-0.5 animate-pulse" />
-                  <div className="space-y-1">
-                    <h4 className="font-bold text-zinc-200">Preservar Caché Semántico Vectorial (`pgvector`)</h4>
-                    <p className="text-zinc-400 leading-relaxed">
-                      Al limpiar esta conversación, reiniciarás tus mensajes a su estado de bienvenida socrática. Sin embargo, 
-                      <strong> no se destruirá el caché semántico global</strong> en Supabase.
-                    </p>
-                  </div>
-                </div>
-
-                <p className="text-zinc-400 leading-relaxed font-sans text-[13px]">
-                  Para garantizar la viabilidad del proyecto, reducir el consumo y optimizar tu cuota de Gemini, conservamos los siguientes mecanismos:
-                </p>
-
-                <div className="space-y-4">
-                  {/* Step 1 */}
-                  <div className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
-                      1
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-zinc-200 text-sm">Vectorización Eficiente (Embeddings)</h5>
-                      <p className="text-zinc-400 mt-1">
-                        Las intenciones de tus preguntas se convierten a vectores numéricos de 768 dimensiones mediante un modelo de alta eficiencia (como <code>text-embedding-004</code>).
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 2 */}
-                  <div className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
-                      2
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-zinc-200 text-sm">Búsqueda de Coincidencias de Similitud de Coseno</h5>
-                      <p className="text-zinc-400 mt-1">
-                        La extensión <code>pgvector</code> compara la semántica de tu duda actual. Si de forma teórica coincide en al menos un <strong>92%</strong> con una duda previamente resuelta, ¡se sirve la misma solución al instante!
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 3 */}
-                  <div className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-center flex items-center justify-center font-bold shrink-0 text-xs shadow-sm">
-                      3
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-zinc-200 text-sm">Enrutamiento Socrático Inteligente</h5>
-                      <p className="text-zinc-400 mt-1">
-                        Las dudas directas o factuales se resuelven en <strong>&lt; 100ms</strong> con costo <strong>$0</strong> de API de Gemini. Solo las dudas procedimentales y personalizadas eluden el caché para mantener la esencia de la tutoría.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-300">
-                  <Info size={16} className="shrink-0 text-amber-500 mt-0.5" />
-                  <div>
-                    <p className="font-semibold mb-1 text-zinc-200">¿Qué sucederá ahora?</p>
-                    <p className="text-zinc-400">
-                      El historial de mensajes en pantalla de este tema volverá a empezar, pero si vuelves a formular preguntas conceptuales comunes ya resueltas, se cargarán de inmediato desde la base de datos sin consumir tu cuota diaria de tutoría.
-                    </p>
-                  </div>
+                <div>
+                  <h3 className="text-sm font-sans font-bold text-white">¿Reiniciar conversación?</h3>
+                  <p className="text-[10px] font-mono text-rose-400 uppercase tracking-wider">Acción Irreversible</p>
                 </div>
               </div>
-
-              {/* Footer */}
-              <div className="px-6 py-4 border-t border-zinc-800/80 bg-zinc-900/20 flex flex-col sm:flex-row justify-end gap-2.5">
+              
+              <p className="text-xs text-zinc-350 leading-relaxed">
+                Se limpiará la pantalla de este diálogo socrático actual para comenzar una sesión fresca. El historial de tus interacciones previas seguirá guardado de forma segura en la base de datos de tu perfil.
+              </p>
+              
+              <div className="flex items-center justify-end gap-2.5 pt-2">
                 <button
-                  onClick={() => setIsCleanModalOpen(false)}
-                  className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all"
+                  type="button"
+                  onClick={() => setShowClearConfirm(false)}
+                  className="px-3.5 py-1.5 text-xs font-sans font-bold text-zinc-400 hover:text-white hover:bg-[#1e293b] rounded-xl transition-all cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
-                  onClick={handleConfirmReset}
-                  className="px-5 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/35 text-rose-300 rounded-xl text-xs sm:text-[11px] font-bold uppercase tracking-wider transition-all"
+                  type="button"
+                  onClick={handleConfirmClear}
+                  className="px-4 py-1.5 text-xs font-sans font-bold bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-lg shadow-rose-950/20 transition-all cursor-pointer"
                 >
-                  Confirmar Limpieza pero Mantener Caché
+                  Sí, reiniciar
                 </button>
               </div>
             </motion.div>
@@ -407,4 +456,4 @@ export const SocraticChat = ({ userId, subject, topic, onSessionComplete }: Socr
       </AnimatePresence>
     </div>
   );
-};
+}

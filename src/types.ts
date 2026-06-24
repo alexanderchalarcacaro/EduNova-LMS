@@ -1,38 +1,38 @@
-export type PlanType = 'free_user' | 'pro' | 'ultra';
-
-export interface Plan {
-  id: PlanType;
-  name: string;
-  price: string;
-  features: string[];
-  color: string;
-}
-
 export interface Topic {
   id: string;
   name: string;
-  description: string;
-  difficulty: 'Basic' | 'Intermediate' | 'Advanced';
+  description?: string;
+  difficulty: 'Beginner' | 'Intermediate' | 'Advanced' | 'Basic';
+  videoAsset?: {
+    playbackId: string;
+    assetId: string;
+  };
+  videoUrl?: string;
+  content?: any;
 }
 
 export interface Subject {
   id: string;
   name: string;
+  description?: string;
   icon: string;
   color: string;
+  tier?: string;
+  imageUrl?: string;
   topics: Topic[];
 }
 
-export interface Message {
+export interface ChatMessage {
+  id: string;
   role: 'user' | 'model';
-  text: string;
-  cached?: boolean;
-  classification?: 'Factual' | 'Procedimental';
+  content: string;
+  timestamp: string;
 }
 
-export interface LearningSession {
-  subject: Subject;
-  selectedTopics: Topic[];
-  currentTopicIndex: number;
-  history: Message[];
+export interface Plan {
+  id: string;
+  name: string;
+  price: string;
+  features: string[];
+  color: string;
 }

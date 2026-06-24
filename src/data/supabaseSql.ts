@@ -1,4 +1,4 @@
--- EduNova Supabase with pgvector Schema & Semantic Cache Configuration
+export const SUPABASE_SETUP_SQL = `-- EduNova Supabase with pgvector Schema & Semantic Cache Configuration
 -- Copy and run this script in your Supabase SQL Editor (https://supabase.com)
 
 -- 1. Enable pgvector extension
@@ -113,47 +113,4 @@ create policy "Allow public access for user chats"
   on public.user_chats for all
   using (true)
   with check (true);
-
-
--- 7. Create user completed topics table for tracking lesson completion state
-create table if not exists public.user_completed_topics (
-  id bigint generated always as identity primary key,
-  user_id text not null,
-  subject_id text not null,
-  topic_id text not null,
-  completed_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  constraint unique_user_completed_topic unique (user_id, topic_id)
-);
-
--- Enable RLS on user_completed_topics
-alter table public.user_completed_topics enable row level security;
-
-drop policy if exists "Allow public access for completed topics" on public.user_completed_topics;
-create policy "Allow public access for completed topics"
-  on public.user_completed_topics for all
-  using (true)
-  with check (true);
-
-
--- 8. Create user course progress table for tracking lessons and courses in progress
-create table if not exists public.user_course_progress (
-  id bigint generated always as identity primary key,
-  user_id text not null,
-  subject_id text not null,
-  subject_name text not null,
-  last_topic_id text not null,
-  last_topic_name text not null,
-  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  constraint unique_user_subject_progress unique (user_id, subject_id)
-);
-
--- Enable RLS on user_course_progress
-alter table public.user_course_progress enable row level security;
-
-drop policy if exists "Allow public access for course progress" on public.user_course_progress;
-create policy "Allow public access for course progress"
-  on public.user_course_progress for all
-  using (true)
-  with check (true);
-
-
+`;

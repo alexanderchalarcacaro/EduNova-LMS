@@ -12,6 +12,7 @@ interface TopicListItemProps {
 export const TopicListItem = ({ topic, isSelected, onToggle }: TopicListItemProps) => {
   const difficultyColor = {
     Basic: 'text-green-600 bg-green-50',
+    Beginner: 'text-green-600 bg-green-50',
     Intermediate: 'text-amber-600 bg-amber-50',
     Advanced: 'text-rose-600 bg-rose-50'
   }[topic.difficulty];

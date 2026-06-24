@@ -1,11 +1,27 @@
 import React from 'react';
 import { Sparkles, BookOpen, Brain, Target, ArrowRight } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/clerk-react';
-import { PricingModal } from './PricingModal';
+import PricingModal from './PricingModal';
 import { EdunovaLogo } from './EdunovaLogo';
 import { AntigravityObjects } from './AntigravityObjects';
 
-export const LandingPage: React.FC = () => {
+interface LandingPageProps {
+  guestMode?: boolean;
+  onMockLogin?: (user: any) => void;
+}
+
+export const LandingPage: React.FC<LandingPageProps> = ({ guestMode = false, onMockLogin }) => {
+  const triggerMockSession = () => {
+    if (onMockLogin) {
+      onMockLogin({
+        id: 'mock_std_88',
+        fullName: 'Estudiante Demo EduNova',
+        username: 'estudiante_demo',
+        primaryEmailAddress: { emailAddress: 'estudiante@edunova.com' },
+        imageUrl: ''
+      });
+    }
+  };
   return (
     <div className="min-h-screen bg-[#FFFFFF] text-[#111827] relative flex flex-col justify-between overflow-x-hidden font-sans">
       {/* 1. Immersive Google Antigravity-style Interactive Parallax objects */}
@@ -30,11 +46,20 @@ export const LandingPage: React.FC = () => {
             >
               Planes de Estudio
             </a>
-            <SignInButton mode="modal" fallbackRedirectUrl="/">
-              <button className="bg-[#1A2B5E] hover:bg-[#2563EB] text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98]">
-                Iniciar Sesión
+            {guestMode ? (
+              <button 
+                onClick={triggerMockSession}
+                className="bg-[#1A2B5E] hover:bg-[#2563EB] text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98]"
+              >
+                Acceso Demo Rápido
               </button>
-            </SignInButton>
+            ) : (
+              <SignInButton mode="modal" fallbackRedirectUrl="/">
+                <button className="bg-[#1A2B5E] hover:bg-[#2563EB] text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-[0.98]">
+                  Iniciar Sesión
+                </button>
+              </SignInButton>
+            )}
           </div>
         </div>
       </header>
@@ -60,11 +85,20 @@ export const LandingPage: React.FC = () => {
         </p>
 
         <div className="pt-6 flex flex-col sm:flex-row justify-center items-center gap-4">
-          <SignUpButton mode="modal" fallbackRedirectUrl="/">
-            <button className="bg-gradient-to-tr from-[#2563EB] to-[#10B981] text-white px-9 py-4.5 rounded-full font-bold text-sm uppercase tracking-wider hover:shadow-xl hover:shadow-emerald-500/10 hover:translate-y-[-1px] transition-all active:scale-95 border border-emerald-300/20">
-              Comenzar Itinerario Gratis
+          {guestMode ? (
+            <button 
+              onClick={triggerMockSession}
+              className="bg-gradient-to-tr from-[#2563EB] to-[#10B981] text-white px-9 py-4.5 rounded-full font-bold text-sm uppercase tracking-wider hover:shadow-xl hover:shadow-emerald-500/10 hover:translate-y-[-1px] transition-all active:scale-95 border border-emerald-300/20"
+            >
+              Comenzar Itinerario Gratis (Demo)
             </button>
-          </SignUpButton>
+          ) : (
+            <SignUpButton mode="modal" fallbackRedirectUrl="/">
+              <button className="bg-gradient-to-tr from-[#2563EB] to-[#10B981] text-white px-9 py-4.5 rounded-full font-bold text-sm uppercase tracking-wider hover:shadow-xl hover:shadow-emerald-500/10 hover:translate-y-[-1px] transition-all active:scale-95 border border-emerald-300/20">
+                Comenzar Itinerario Gratis
+              </button>
+            </SignUpButton>
+          )}
           
           <a
             href="#about"

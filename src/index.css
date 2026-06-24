@@ -1,24 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Outfit", sans-serif;
-  
-  /* EduNova Brand Guidelines Palette */
-  --color-brand-navy: #1A2B5E;
-  --color-brand-blue: #2563EB;
-  --color-brand-emerald: #10B981;
-  --color-brand-gray: #6B7280;
-  
-  /* EduNova Supporting Colors */
-  --color-brand-bg-light: #FFFFFF;
-  --color-brand-card-light: #F3F4F6;
-  --color-brand-border-light: #D1D5DB;
-  --color-brand-text-dark: #111827;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
-
-body {
-  @apply bg-brand-bg-light text-brand-text-dark font-sans transition-colors duration-200;
-}
-
