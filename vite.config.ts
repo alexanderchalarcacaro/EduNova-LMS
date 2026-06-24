@@ -5,12 +5,14 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    sourcemap: false,
-    minify: false,
-    cssMinify: false,
     rollupOptions: {
-      cache: false,
-      maxParallelFileOps: 1,
+      output: {
+        manualChunks: {
+          sanity: ['sanity'],
+          react: ['react', 'react-dom'],
+          clerk: ['@clerk/clerk-react']
+        }
+      }
     }
   }
 })
