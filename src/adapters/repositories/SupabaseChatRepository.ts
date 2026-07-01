@@ -1,6 +1,6 @@
 import { ChatRepositoryPort } from '../../core/ports/ChatRepositoryPort';
 import { ChatMessage } from '../../types';
-import { getUserAllChats, getChatHistory, saveChatMessage, deleteChatMessage } from '../../lib/supabase';
+import { getUserAllChats, getChatHistory, saveChatMessage, deleteChatMessage } from '../../services/supabase';
 
 export class SupabaseChatRepository implements ChatRepositoryPort {
   async getChatHistory(userId: string, subjectId: string, topicId: string): Promise<ChatMessage[]> {

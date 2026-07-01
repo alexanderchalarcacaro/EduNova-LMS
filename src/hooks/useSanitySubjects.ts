@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Subject } from '../types';
 import { getSubjectsUseCase } from '../core/HexagonalFactory';
-import { sanityClient } from './client';
+import { sanityClient } from '../services/sanity';
 
 export const DEFAULT_SUBJECTS: Subject[] = [
   {

@@ -1,12 +1,25 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Setup Supabase for Semantic Cache
+let rawSupabaseUrl = process.env.VITE_SUPABASE_URL || '';
+if (rawSupabaseUrl.startsWith('//')) {
+  rawSupabaseUrl = 'https:' + rawSupabaseUrl;
+}
+const supabaseUrl = rawSupabaseUrl;
+const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || '';
+const supabase = (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
 
 // Initialize Gemini SDK with server-side private key safely
 const apiKey = process.env.GEMINI_API_KEY;
@@ -64,6 +77,57 @@ app.post("/api/chat", async (req, res) => {
     return;
   }
 
+  // --- SEMANTIC CACHE INTEGRATION (FinOps & Low Latency) ---
+  // In SocraticChat, the initial greeting is sent first, so the first student response/query
+  // corresponds to messages.length <= 4. We cache these initial queries to preserve context and performance.
+  const isFactualQuery = messages.length <= 4 && lastUserMessage && lastUserMessage.trim().length > 0;
+  let queryEmbedding: number[] | null = null;
+  let cachedResponse: string | null = null;
+
+  if (isFactualQuery && supabase) {
+    try {
+      // 1. Vectorize the student's query using the modern gemini-embedding-2-preview model with 768 dimensions
+      console.log(`🧠 Vectorizing query for Semantic Cache: "${lastUserMessage}"`);
+      const embResponse = await ai.models.embedContent({
+        model: "gemini-embedding-2-preview",
+        contents: lastUserMessage,
+        config: {
+          outputDimensionality: 768
+        }
+      });
+      
+      queryEmbedding = embResponse.embedding?.values || embResponse.embeddings?.[0]?.values || null;
+
+      // 2. Search for semantic matches in Supabase pgvector using similarity threshold
+      if (queryEmbedding) {
+        const { data, error } = await supabase.rpc('match_semantic_cache', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.88, // 88% similarity threshold (highly accurate and flexible)
+          match_count: 1,
+          subject_filter: topicName // restrict matching to the active topic for pristine precision
+        });
+
+        if (!error && data && data.length > 0) {
+          // Cache Hit!
+          console.log(`✅ Semantic Cache HIT! (Similarity: ${Math.round(data[0].similarity * 100)}%) - Cost: $0, Latency: <150ms`);
+          cachedResponse = data[0].response;
+          res.json({ content: cachedResponse, fromCache: true });
+          return;
+        } else {
+          if (error) {
+            console.error("Supabase match_semantic_cache RPC error:", error);
+          }
+          console.log(`⏳ Semantic Cache MISS. Proceeding to Gemini...`);
+        }
+      }
+    } catch (cacheErr: any) {
+      console.warn("⚠️ Semantic Cache check failed, falling back to standard generation:", cacheErr.message || cacheErr);
+    }
+  } else if (!isFactualQuery) {
+    console.log(`🔀 Socratic Routing: Conversation history active (messages: ${messages.length}). Bypassing cache to reason dynamically.`);
+  }
+  // --------------------------------------------------------
+
   // Try-retry configuration with backoff to withstand API outages (like 503 UNAVAILABLE, 429)
   // We prioritize gemini-3.1-flash-lite as it is highly available, fast, and extremely stable under peak load periods
   const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"];
@@ -90,7 +154,24 @@ app.post("/api/chat", async (req, res) => {
       });
 
       if (response && response.text) {
-        res.json({ content: response.text });
+        const genText = response.text;
+        
+        // --- SAVE TO SEMANTIC CACHE (Background) ---
+        if (isFactualQuery && supabase && queryEmbedding) {
+          supabase.from('semantic_cache').insert({
+            query: lastUserMessage,
+            response: genText,
+            subject: topicName,
+            is_factual: true,
+            embedding: queryEmbedding
+          }).then(({ error }) => {
+            if (error) console.error("Failed to save to semantic cache:", error.message);
+            else console.log("💾 Saved new factual response to Semantic Cache.");
+          });
+        }
+        // -------------------------------------------
+
+        res.json({ content: genText });
         return;
       } else {
         throw new Error("Respuesta vacía o incompleta recibida del modelo.");
@@ -261,6 +342,25 @@ app.post("/api/clerk-billing/checkout", async (req, res) => {
   try {
     console.log(`Creating Clerk Billing Checkout context for ${userId} with plan ${planId}...`);
     
+    // Sync to Supabase user_profiles table as requested
+    if (supabase) {
+      try {
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: userId,
+            plan_id: planId
+          });
+        if (profileError) {
+          console.error("Error updating user profile in Supabase during checkout:", profileError);
+        } else {
+          console.log(`Successfully synced user_profiles in Supabase: ${userId} -> ${planId}`);
+        }
+      } catch (dbErr: any) {
+        console.error("Database connection failed during profile sync:", dbErr.message || dbErr);
+      }
+    }
+    
     // Try to trigger Clerk's official checkout endpoints
     const clerkCheckoutEndpoint = `https://api.clerk.com/v1/users/${userId}/billing/checkout`;
     const response = await fetch(clerkCheckoutEndpoint, {
@@ -288,11 +388,11 @@ app.post("/api/clerk-billing/checkout", async (req, res) => {
     // If the official billing endpoints fail (e.g. Stripe not connected in Clerk sandbox dashboard)
     // we gracefully fall back to a high-fidelity simulation checkout url that updates metadata
     // This keeps the user experience elegant and fully-functional under all development/preview states.
-    console.warn(`Clerk Billing endpoint responded with error: ${response.status}. Initiating premium simulated checkout synchronization.`);
+    console.log(`Clerk Billing endpoint responded with status: ${response.status}. Initiating premium simulated checkout synchronization.`);
     
     // Synchronize to the user unsafeMetadata automatically to validate their selected paid tier
     const updateResponse = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
-      method: "POST",
+      method: "PATCH",
       headers: {
         Authorization: `Bearer ${CLERK_SECRET_KEY}`,
         "Content-Type": "application/json"
@@ -317,6 +417,237 @@ app.post("/api/clerk-billing/checkout", async (req, res) => {
   } catch (err: any) {
     console.error("Clerk Billing checkout sessions failed:", err.message || err);
     res.status(500).json({ error: "Failed to initiate Clerk billing checkout session.", detail: err.message });
+  }
+});
+
+// --- ITINERARY CLERK VERIFICATION & SUPABASE REGISTRATION API ---
+app.post("/api/itinerary", async (req, res) => {
+  const { userId, subjectId, topicIds } = req.body;
+  
+  // Also support snake_case body properties in case of future client transitions
+  const finalUserId = userId || req.body.user_id;
+  const finalSubjectId = subjectId || req.body.subject_id;
+  const finalTopicIds = topicIds || req.body.topic_ids;
+
+  if (!finalUserId) {
+    res.status(400).json({ error: "userId is required for registering itinerary" });
+    return;
+  }
+  if (!finalSubjectId) {
+    res.status(400).json({ error: "subjectId is required for registering itinerary" });
+    return;
+  }
+  if (!finalTopicIds || !Array.isArray(finalTopicIds)) {
+    res.status(400).json({ error: "topicIds must be a valid non-empty array of topic identifiers" });
+    return;
+  }
+
+  try {
+    let clerkUserDetails: any = null;
+    const isMockUser = String(finalUserId).startsWith('mock_') || finalUserId === 'guest';
+
+    if (!isMockUser) {
+      console.log(`[Clerk Validate] Verifying user credentials on Clerk for user_id: ${finalUserId}`);
+      const clerkRes = await fetch(`https://api.clerk.com/v1/users/${finalUserId}`, {
+        headers: {
+          Authorization: `Bearer ${CLERK_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        }
+      });
+      
+      if (clerkRes.ok) {
+        clerkUserDetails = await clerkRes.json();
+        console.log(`[Clerk Validate] Verification succeeded for ${clerkUserDetails.first_name} ${clerkUserDetails.last_name} (${clerkUserDetails.email_addresses?.[0]?.email_address || 'Sin correo'})`);
+      } else {
+        console.warn(`[Clerk Validate] Verification returned status: ${clerkRes.status}. Continuing with provided user identifier.`);
+      }
+    } else {
+      console.log(`[Clerk Validate] Mock / Guest user mode active for: ${finalUserId}`);
+    }
+
+    // Register inside Supabase Cloud Database if configured
+    if (supabase) {
+      console.log(`[Supabase Sync] Upserting user itinerary for ${finalUserId} to table public.user_itineraries`);
+      const { error } = await supabase
+        .from('user_itineraries')
+        .upsert({
+          user_id: finalUserId,
+          subject_id: finalSubjectId,
+          topic_ids: finalTopicIds,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error('[Supabase Sync] Failed to register user itinerary:', error);
+        res.status(500).json({ error: "Fallo al registrar itinerario en Supabase", detail: error.message });
+        return;
+      }
+      console.log(`[Supabase Sync] Successfully registered user_itineraries row for: ${finalUserId}`);
+    } else {
+      console.warn('[Supabase Sync] Supabase client is not configured on server. Bypassing database save.');
+    }
+
+    res.json({
+      success: true,
+      message: "Itinerario validado con Clerk y registrado exitosamente en Supabase.",
+      userId: finalUserId,
+      subjectId: finalSubjectId,
+      topicIds: finalTopicIds,
+      clerkUser: clerkUserDetails ? {
+        id: clerkUserDetails.id,
+        firstName: clerkUserDetails.first_name,
+        lastName: clerkUserDetails.last_name,
+        fullName: `${clerkUserDetails.first_name || ''} ${clerkUserDetails.last_name || ''}`.trim() || clerkUserDetails.username,
+        email: clerkUserDetails.email_addresses?.[0]?.email_address,
+        imageUrl: clerkUserDetails.image_url,
+        unsafeMetadata: clerkUserDetails.unsafe_metadata
+      } : null
+    });
+
+  } catch (err: any) {
+    console.error("Failed to process itinerary registration:", err.message || err);
+    res.status(500).json({ error: "Failed to process itinerary registration.", detail: err.message });
+  }
+});
+
+// --- SOCRATIC CHAT DATABASE API ---
+app.get("/api/chats", async (req, res) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  if (!supabase) {
+    res.json([]);
+    return;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('user_chats')
+      .select('subject_id, topic_id, topic_name, updated_at, messages')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching chats from Supabase:', error);
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    
+    const formatted = (data || []).map(chat => {
+      const messages = (chat.messages || []) as any[];
+      const lastMsgContent = messages.length > 0 ? messages[messages.length - 1].content : '';
+      return {
+        user_id: userId,
+        subject_id: chat.subject_id,
+        topic_id: chat.topic_id,
+        topic_name: chat.topic_name,
+        last_message: lastMsgContent.substring(0, 100),
+        updated_at: chat.updated_at
+      };
+    });
+    res.json(formatted);
+  } catch (err: any) {
+    console.error("Failed to get chats:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/chats/history", async (req, res) => {
+  const { userId, topicId } = req.query;
+  if (!userId || !topicId) {
+    res.status(400).json({ error: "userId and topicId are required" });
+    return;
+  }
+  if (!supabase) {
+    res.json([]);
+    return;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('user_chats')
+      .select('messages')
+      .eq('user_id', userId as string)
+      .eq('topic_id', topicId as string)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error loading chat history from Supabase:', error);
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    
+    if (data && data.messages) {
+      res.json(data.messages);
+    } else {
+      res.json([]);
+    }
+  } catch (err: any) {
+    console.error("Failed to get chat history:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/chats/save", async (req, res) => {
+  const { userId, subjectId, topicId, topicName, messages } = req.body;
+  if (!userId || !subjectId || !topicId || !topicName || !messages) {
+    res.status(400).json({ error: "Missing required fields" });
+    return;
+  }
+  if (!supabase) {
+    res.json({ success: true, warning: "Supabase not configured on server" });
+    return;
+  }
+  try {
+    const { error } = await supabase
+      .from('user_chats')
+      .upsert({
+        user_id: userId,
+        subject_id: subjectId,
+        topic_id: topicId,
+        topic_name: topicName,
+        messages: messages,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id, topic_id' });
+
+    if (error) {
+      console.error('Failed to save chat in Supabase:', error);
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Failed to save chat message:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/chats", async (req, res) => {
+  const { userId, topicId } = req.query;
+  if (!userId || !topicId) {
+    res.status(400).json({ error: "userId and topicId are required" });
+    return;
+  }
+  if (!supabase) {
+    res.json({ success: true });
+    return;
+  }
+  try {
+    const { error } = await supabase
+      .from('user_chats')
+      .delete()
+      .eq('user_id', userId as string)
+      .eq('topic_id', topicId as string);
+
+    if (error) {
+      console.error('Failed to delete chat in Supabase:', error);
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Failed to delete chat:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

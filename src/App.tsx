@@ -5,17 +5,17 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import * as LucideIcons from 'lucide-react';
 
 import { Subject, Topic, Plan } from './types';
-import { useSanitySubjects } from './sanity/useSanitySubjects';
-import { getUserAllChats, deleteChatMessage } from './lib/supabase';
+import { useSanitySubjects } from './hooks/useSanitySubjects';
+import { getUserAllChats, deleteChatMessage, saveUserItinerary } from './services/supabase';
 import SocraticChat from './components/SocraticChat';
-import { TopicContentView } from './components/TopicContentView';
+import { TopicContentView } from './views/TopicContentView';
 import PricingModal, { PLANS } from './components/PricingModal';
 const SanityStudio = React.lazy(() => import('./studio'));
 import { EdunovaLogo } from './components/EdunovaLogo';
 import { AntigravityObjects } from './components/AntigravityObjects';
-import { LandingPage } from './components/LandingPage';
+import { LandingPage } from './views/LandingPage';
 import { SettingsModal } from './components/SettingsModal';
-import { onTableStatusChange, deleteUserChat, saveLastStudiedTopic, getCompletedTopics } from './services/db';
+import { onTableStatusChange, deleteUserChat, saveLastStudiedTopic, getCompletedTopics, saveUserPlan } from './services/db';
 import { SUPABASE_SETUP_SQL } from './data/supabaseSql';
 
 interface AppProps {
@@ -23,6 +23,7 @@ interface AppProps {
   clerkUser?: any;
   clerkSignOut?: () => void;
   clerkLoaded?: boolean;
+  clerkOpenSignIn?: () => void;
 }
 
 const getSubjectTopics = (subject: Subject): Topic[] => {
@@ -56,7 +57,8 @@ export default function App({
   guestMode = false, 
   clerkUser = null, 
   clerkSignOut = () => {}, 
-  clerkLoaded = true 
+  clerkLoaded = true,
+  clerkOpenSignIn = () => {}
 }: AppProps) {
   // Dedicated state for guest authentication when Clerk isn't active
   const [mockUser, setMockUser] = useState<any>(() => {
@@ -310,6 +312,30 @@ export default function App({
     }
   }, [user, guestMode]);
 
+  // Handle success checkout redirect parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get('checkout_success');
+    const planId = params.get('plan_id');
+    if (success === 'true' && planId) {
+      console.log(`Checkout success query param detected. Setting user plan to: ${planId}`);
+      const planObj = PLANS.find(p => p.id === planId);
+      if (planObj) {
+        setUserPlan(planObj);
+        localStorage.setItem('edunova_active_plan', planId);
+        
+        // Also save to Supabase to make sure it's 100% updated in all clients
+        const activeUserId = user?.id || 'guest';
+        if (activeUserId && activeUserId !== 'guest') {
+          saveUserPlan(activeUserId, planId);
+        }
+      }
+      
+      // Clean up the URL query params so they don't trigger the effect repeatedly
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [user?.id]);
+
   // Upgrade Plan handler using Real Clerk Billing integration
   const handleUpgradePlan = async (planId: string) => {
     if (guestMode) {
@@ -354,6 +380,8 @@ export default function App({
           if (planObj) {
             setUserPlan(planObj);
             localStorage.setItem('edunova_active_plan', planId);
+            // Sync to Supabase user_profiles table as requested
+            await saveUserPlan(user.id, planId);
           }
           alert(`✨ ¡Plan '${planObj?.name}' activado con éxito! Clerk Billing ha registrado la suscripción.`);
         } else {
@@ -377,6 +405,8 @@ export default function App({
           });
           setUserPlan(planObj);
           localStorage.setItem('edunova_active_plan', planId);
+          // Sync to Supabase user_profiles table as requested
+          await saveUserPlan(user.id, planId);
           alert(`Plan '${planObj.name}' sincronizado exitosamente con Clerk.`);
         } catch (syncErr) {
           console.error("Classic sync fallback failed:", syncErr);
@@ -408,6 +438,9 @@ export default function App({
           setMockUser(simulatedUser);
           localStorage.setItem('edunova_mock_user', JSON.stringify(simulatedUser));
         }} 
+        clerkUser={null}
+        clerkOpenSignIn={clerkOpenSignIn}
+        onUpgrade={handleUpgradePlan}
       />
     );
   }
@@ -455,8 +488,20 @@ export default function App({
     );
   };
 
-  const generateItinerary = () => {
+  const generateItinerary = async () => {
     if (!selectedSubject || !selectedTopics.length) return;
+    
+    try {
+      const topicIds = selectedTopics.map(t => t.id);
+      const activeUserId = user?.id || clerkUser?.id || 'guest';
+      console.log('Generating itinerary - User ID:', activeUserId, 'Subject:', selectedSubject.id, 'Topics:', topicIds);
+      
+      // Call saveUserItinerary which secure POSTs to /api/itinerary for Clerk user validation & Supabase recording
+      await saveUserItinerary(activeUserId, selectedSubject.id, topicIds);
+    } catch (e) {
+      console.error('Error saving itinerary:', e);
+    }
+    
     navigate(`/itinerary/${selectedSubject.id}`);
   };
 
@@ -1363,6 +1408,9 @@ export default function App({
                 <PricingModal
                   currentPlan={userPlan?.id || 'free'}
                   onUpgrade={handleUpgradePlan}
+                  clerkUser={user}
+                  clerkOpenSignIn={clerkOpenSignIn}
+                  guestMode={guestMode}
                 />
               </motion.div>
             )}

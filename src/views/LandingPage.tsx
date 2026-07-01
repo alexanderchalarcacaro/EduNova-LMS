@@ -1,16 +1,25 @@
 import React from 'react';
 import { Sparkles, BookOpen, Brain, Target, ArrowRight } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/clerk-react';
-import PricingModal from './PricingModal';
-import { EdunovaLogo } from './EdunovaLogo';
-import { AntigravityObjects } from './AntigravityObjects';
+import PricingModal from '../components/PricingModal';
+import { EdunovaLogo } from '../components/EdunovaLogo';
+import { AntigravityObjects } from '../components/AntigravityObjects';
 
 interface LandingPageProps {
   guestMode?: boolean;
   onMockLogin?: (user: any) => void;
+  clerkUser?: any;
+  clerkOpenSignIn?: () => void;
+  onUpgrade?: (planId: string) => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ guestMode = false, onMockLogin }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ 
+  guestMode = false, 
+  onMockLogin,
+  clerkUser = null,
+  clerkOpenSignIn,
+  onUpgrade
+}) => {
   const triggerMockSession = () => {
     if (onMockLogin) {
       onMockLogin({
@@ -169,7 +178,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ guestMode = false, onM
           <div className="w-12 h-0.5 bg-zinc-300 mx-auto" />
         </div>
         <div className="w-full">
-          <PricingModal />
+          <PricingModal 
+            currentPlan="free" 
+            onUpgrade={onUpgrade} 
+            clerkUser={clerkUser}
+            clerkOpenSignIn={clerkOpenSignIn}
+            guestMode={guestMode}
+            onMockLogin={onMockLogin}
+          />
         </div>
       </section>
 

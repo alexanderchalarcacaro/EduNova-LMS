@@ -74,29 +74,18 @@ export default function SocraticChat({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Helper to persist to the database/localStorage while keeping hidden messages intact
+  // Helper to persist to the database while keeping hidden messages intact? 
+  // No, we rely 100% on Supabase and just persist the current array.
   const saveHistory = async (newVisibleMessages: ChatMessage[]) => {
-    const fullHistory = await manageChatUseCase.fetchHistory(userId, subject.id, topic.id);
-    const lastCleared = localStorage.getItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`);
-    
-    // Hidden messages are those created before or equal to lastCleared
-    const hiddenMessages = lastCleared
-      ? fullHistory.filter(msg => new Date(msg.timestamp).getTime() <= new Date(lastCleared).getTime())
-      : [];
-      
-    const combined = [...hiddenMessages, ...newVisibleMessages];
-    await manageChatUseCase.persistMessage(userId, subject.id, topic.id, topic.name, combined);
+    await manageChatUseCase.persistMessage(userId, subject.id, topic.id, topic.name, newVisibleMessages);
   };
 
   // Load chat session history on mount
   useEffect(() => {
     async function loadHistory() {
       const history = await manageChatUseCase.fetchHistory(userId, subject.id, topic.id);
-      const lastCleared = localStorage.getItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`);
       
-      const visible = lastCleared
-        ? history.filter(msg => new Date(msg.timestamp).getTime() > new Date(lastCleared).getTime())
-        : history;
+      const visible = history;
       
       if (visible.length > 0) {
         setMessages(visible);
@@ -108,9 +97,12 @@ export default function SocraticChat({
           content: `¡Hola! Me alegra guiarte en el estudio de **${topic.name}**. 
  
 Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con tus propias palabras, ¿cuál dirías que es tu entendimiento o intuición inicial acerca de este concepto en tu vida cotidiana, o qué pregunta te urge resolver de primero?`,
-          timestamp: lastCleared ? new Date(new Date(lastCleared).getTime() + 1000).toISOString() : new Date().toISOString()
+          timestamp: new Date().toISOString()
         };
         setMessages([openingMessage]);
+        // Don't save empty starts yet until user interaction to avoid cluttering db,
+        // or just let it save it (since it's a supabase row now, no big deal).
+        // Let's stick to saving it to ensure it renders correctly after a refresh if it's considered started.
         await saveHistory([openingMessage]);
       }
     }
@@ -154,7 +146,8 @@ Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con t
             id: `msg-${Date.now()}-model`,
             role: 'model',
             content: data.content,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            fromCache: data.fromCache
           };
 
           const finalMessages = [...updatedMessages, modelMessage];
@@ -226,7 +219,8 @@ Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con t
         id: `msg-${Date.now()}-model`,
         role: 'model',
         content: data.content,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        fromCache: data.fromCache
       };
 
       const finalMessages = [...updatedMessages, modelMessage];
@@ -249,16 +243,14 @@ Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con t
   };
 
   const handleConfirmClear = async () => {
-    const clearTime = new Date().toISOString();
-    localStorage.setItem(`edunova_chat_cleared_${userId || 'guest'}_${subject.id}_${topic.id}`, clearTime);
-    
+    // Just reset the UI state and overwrite the Supabase entry
     const openingMessage: ChatMessage = {
       id: `initial-opening-restart-${Date.now()}`,
       role: 'model',
       content: `¡Listo! Volvamos a empezar sobre **${topic.name}**. 
 
 ¿Qué es lo primero que se te viene a la mente cuando piensas en este tema, o cuál es tu teoría inicial sobre cómo funciona?`,
-      timestamp: new Date(new Date(clearTime).getTime() + 1000).toISOString()
+      timestamp: new Date().toISOString()
     };
     setMessages([openingMessage]);
     await saveHistory([openingMessage]);
@@ -330,10 +322,16 @@ Para comenzar nuestro viaje socrático de hoy de manera activa, cuéntame: con t
                     ? 'bg-[#0f172a]/70 border border-[#1e293b] rounded-tl-none shadow-sm' 
                     : 'bg-platzi-green/10 border border-platzi-green/25 rounded-tr-none text-white'
                 }`}>
-                  <div className="flex items-center gap-1.5 mb-2.5 shrink-0">
+                  <div className="flex items-center gap-2 mb-2.5 shrink-0 flex-wrap">
                     {isModel ? (
                       <>
                         <span className="text-[10px] font-mono font-black text-platzi-green tracking-wider uppercase">TUTOR SOCRÁTICO</span>
+                        {msg.fromCache && (
+                          <span className="text-[9px] font-mono font-bold bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded text-emerald-400 flex items-center gap-1 animate-pulse">
+                            <Zap size={10} className="fill-emerald-400" />
+                            Caché Semántica (⚡ Rápido)
+                          </span>
+                        )}
                       </>
                     ) : (
                       <>

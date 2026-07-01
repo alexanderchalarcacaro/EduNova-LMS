@@ -1,7 +1,7 @@
 import { SubjectRepositoryPort } from '../../core/ports/SubjectRepositoryPort';
 import { Subject } from '../../types';
-import { sanityClient } from '../../sanity/client';
-import { DEFAULT_SUBJECTS } from '../../sanity/useSanitySubjects';
+import { sanityClient } from '../../services/sanity';
+import { DEFAULT_SUBJECTS } from '../../hooks/useSanitySubjects';
 
 export class SanitySubjectRepository implements SubjectRepositoryPort {
   async getSubjects(): Promise<Subject[]> {

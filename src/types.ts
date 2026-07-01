@@ -27,6 +27,7 @@ export interface ChatMessage {
   role: 'user' | 'model';
   content: string;
   timestamp: string;
+  fromCache?: boolean;
 }
 
 export interface Plan {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { sanityClient } from '../sanity/client';
+import { sanityClient } from '../services/sanity';
 import MuxPlayer from '@mux/mux-player-react';
 import { BookOpen, Video, ChevronRight, GraduationCap } from 'lucide-react';
 

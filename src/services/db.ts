@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from './supabase';
 import { Message } from '../types';
 
 // Fallback en memoria, no almacena datos de forma persistente (100% seguro contra XSS local)

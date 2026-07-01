@@ -47,9 +47,20 @@ export const PLANS: Plan[] = [
 interface PricingModalProps {
   currentPlan?: string;
   onUpgrade?: (planId: string) => void;
+  clerkUser?: any;
+  clerkOpenSignIn?: () => void;
+  guestMode?: boolean;
+  onMockLogin?: (user: any) => void;
 }
 
-export default function PricingModal({ currentPlan = 'free', onUpgrade }: PricingModalProps) {
+export default function PricingModal({ 
+  currentPlan = 'free', 
+  onUpgrade,
+  clerkUser = null,
+  clerkOpenSignIn,
+  guestMode = false,
+  onMockLogin
+}: PricingModalProps) {
   const [dynamicPlans, setDynamicPlans] = useState<Plan[]>(PLANS);
   const [sourceInfo, setSourceInfo] = useState<string>("Sincronización de Clerk");
   const [loading, setLoading] = useState<boolean>(true);
@@ -76,6 +87,33 @@ export default function PricingModal({ currentPlan = 'free', onUpgrade }: Pricin
   }, []);
 
   const handleSelectPlan = (planId: string) => {
+    // Check if the user is authenticated (either real Clerk or mock)
+    const isLoggedIn = !!clerkUser || (guestMode && localStorage.getItem('edunova_mock_user') !== null);
+
+    if (!isLoggedIn) {
+      if (guestMode) {
+        if (onMockLogin) {
+          alert("Por favor, inicia sesión para continuar con el plan. Activando sesión de demostración...");
+          onMockLogin({
+            id: 'mock_std_88',
+            fullName: 'Estudiante Demo EduNova',
+            username: 'estudiante_demo',
+            primaryEmailAddress: { emailAddress: 'estudiante@edunova.com' },
+            imageUrl: ''
+          });
+        } else {
+          alert("Por favor, inicia sesión de demostración en la parte superior para continuar.");
+        }
+      } else {
+        if (clerkOpenSignIn) {
+          clerkOpenSignIn();
+        } else {
+          alert("Por favor, inicia sesión para procesar tu pago con Clerk Billing.");
+        }
+      }
+      return;
+    }
+
     if (onUpgrade) {
       onUpgrade(planId);
     } else {

@@ -14,7 +14,13 @@ create table if not exists public.user_profiles (
 -- Enable RLS on user_profiles
 alter table public.user_profiles enable row level security;
 
-drop policy if exists "Allow public access for profiles" on public.user_profiles;
+DO $$ 
+BEGIN
+  drop policy if exists "Allow public access for profiles" on public.user_profiles;
+EXCEPTION WHEN OTHERS THEN 
+  NULL; 
+END $$;
+
 create policy "Allow public access for profiles"
   on public.user_profiles for all
   using (true)
@@ -31,7 +37,13 @@ create table if not exists public.user_itineraries (
 -- Enable RLS on user_itineraries
 alter table public.user_itineraries enable row level security;
 
-drop policy if exists "Allow public access for itineraries" on public.user_itineraries;
+DO $$ 
+BEGIN
+  drop policy if exists "Allow public access for itineraries" on public.user_itineraries;
+EXCEPTION WHEN OTHERS THEN 
+  NULL; 
+END $$;
+
 create policy "Allow public access for itineraries"
   on public.user_itineraries for all
   using (true)
@@ -57,7 +69,13 @@ create index if not exists semantic_cache_hnsw_idx
 -- Enable RLS on semantic_cache
 alter table public.semantic_cache enable row level security;
 
-drop policy if exists "Allow public access for semantic cache" on public.semantic_cache;
+DO $$ 
+BEGIN
+  drop policy if exists "Allow public access for semantic cache" on public.semantic_cache;
+EXCEPTION WHEN OTHERS THEN 
+  NULL; 
+END $$;
+
 create policy "Allow public access for semantic cache"
   on public.semantic_cache for all
   using (true)
@@ -108,9 +126,16 @@ create table if not exists public.user_chats (
 -- Enable RLS on user_chats
 alter table public.user_chats enable row level security;
 
-drop policy if exists "Allow public access for user chats" on public.user_chats;
+DO $$ 
+BEGIN
+  drop policy if exists "Allow public access for user chats" on public.user_chats;
+EXCEPTION WHEN OTHERS THEN 
+  NULL; 
+END $$;
+
 create policy "Allow public access for user chats"
   on public.user_chats for all
   using (true)
   with check (true);
+
 `;

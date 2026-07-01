@@ -2,8 +2,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { ClerkProvider, useUser, useClerk } from '@clerk/clerk-react'
+import { Provider } from 'react-redux'
+import { store } from './redux/store'
+import { GlobalProvider } from './context/GlobalContext'
 import App from './App.tsx'
-import './index.css'
+import './assets/index.css'
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -16,6 +19,7 @@ function ClerkAppWrapper() {
       clerkUser={user} 
       clerkSignOut={clerk.signOut} 
       clerkLoaded={isLoaded} 
+      clerkOpenSignIn={() => clerk.openSignIn()}
     />
   );
 }
@@ -38,15 +42,19 @@ console.warn = (...args: any[]) => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      {clerkPubKey ? (
-        <ClerkProvider publishableKey={clerkPubKey}>
-          <ClerkAppWrapper />
-        </ClerkProvider>
-      ) : (
-        <App guestMode={true} />
-      )}
-    </BrowserRouter>
+    <Provider store={store}>
+      <GlobalProvider>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          {clerkPubKey ? (
+            <ClerkProvider publishableKey={clerkPubKey}>
+              <ClerkAppWrapper />
+            </ClerkProvider>
+          ) : (
+            <App guestMode={true} />
+          )}
+        </BrowserRouter>
+      </GlobalProvider>
+    </Provider>
   </React.StrictMode>,
 )
 
